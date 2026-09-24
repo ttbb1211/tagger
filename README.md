@@ -399,4 +399,4 @@ make lint
 
 ## 友情链接
 
-- [LINUX DO](https://linux.do/)
+- [HDCDAPE 音乐论坛](https://www.hdcdape.com/)
