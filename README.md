@@ -150,6 +150,17 @@ Tagger 把“查询”和“写入”明确分开。一次批量补全不会直�
 
 ## 快速开始
 
+### 支持的平台
+
+| 平台 | 部署方式 |
+| --- | --- |
+| Linux amd64 | 预编译二进制 / Docker 镜像 |
+| Linux arm64 | Docker 镜像 |
+| 群晖 / 威联通 / Unraid / TrueNAS | Docker 镜像 |
+| 树莓派 / ARM 小主机 | Docker 镜像 |
+
+以上平台均使用 `ghcr.io/ericwyn/tagger` 多架构镜像。其他平台可从源码交叉编译：项目以 `CGO_ENABLED=0` 构建，TagLib 以 WebAssembly 形式嵌入，交叉编译不需要 C 工具链。
+
 ### 构建要求
 
 - Go `1.25.7` 或更高版本
