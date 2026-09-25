@@ -97,6 +97,7 @@ func ValidateRoot(root string) (DirectoryProbe, error) {
 		string(domain.FormatFLAC): 0,
 		string(domain.FormatWAV):  0,
 		string(domain.FormatOGG):  0,
+		string(domain.FormatM4A):  0,
 	}}
 	if file, openErr := os.Open(abs); openErr == nil {
 		probe.Readable = true

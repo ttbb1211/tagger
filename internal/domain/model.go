@@ -10,13 +10,14 @@ const (
 	FormatFLAC TrackFormat = "flac"
 	FormatWAV  TrackFormat = "wav"
 	FormatOGG  TrackFormat = "ogg"
+	FormatM4A  TrackFormat = "m4a"
 )
 
 // IsSupported reports whether the format is accepted throughout the scan,
 // query, playback, and safe-write pipelines.
 func (format TrackFormat) IsSupported() bool {
 	switch format {
-	case FormatMP3, FormatFLAC, FormatWAV, FormatOGG:
+	case FormatMP3, FormatFLAC, FormatWAV, FormatOGG, FormatM4A:
 		return true
 	default:
 		return false
@@ -36,6 +37,8 @@ func TrackFormatFromExtension(extension string) (TrackFormat, bool) {
 		return FormatWAV, true
 	case ".ogg", ".opus":
 		return FormatOGG, true
+	case ".m4a":
+		return FormatM4A, true
 	default:
 		return "", false
 	}

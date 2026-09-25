@@ -2181,6 +2181,8 @@ func audioContentType(format domain.TrackFormat) string {
 		return "audio/wav"
 	case domain.FormatOGG:
 		return "audio/ogg"
+	case domain.FormatM4A:
+		return "audio/mp4"
 	default:
 		return "application/octet-stream"
 	}

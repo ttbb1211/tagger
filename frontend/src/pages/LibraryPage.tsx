@@ -83,6 +83,7 @@ const formatLabels: Record<FormatFilter, string> = {
   mp3: 'MP3',
   wav: 'WAV',
   ogg: 'OGG / Opus',
+  m4a: 'M4A / ALAC',
 };
 
 const sortLabels: Record<SortMode, string> = {
