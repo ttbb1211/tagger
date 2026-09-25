@@ -19,8 +19,9 @@ AppPublisherURL=https://github.com/ttbb1211/tagger
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+; ISCC 的相对路径以本 .iss 文件所在目录为基准，仓库根 = ..\..
 LicenseFile=..\..\LICENSE
-OutputDir=release
+OutputDir=..\..\release
 OutputBaseFilename=tagger_setup_{#APP_VERSION}_windows_amd64
 Compression=lzma2/max
 SolidCompression=yes
@@ -29,7 +30,7 @@ PrivilegesRequired=admin
 UninstallDisplayIcon={app}\tagger.exe
 
 [Files]
-Source: "dist\tagger.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist\tagger.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 ; 数据目录放在用户区，避开 Program Files 的写权限限制
