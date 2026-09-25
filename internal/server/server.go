@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"database/sql"
@@ -2116,13 +2117,12 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		return
 	}
 
-	// 整轨 CUE 虚拟轨道：服务区间限制在 [StartOffsetSeconds, EndOffsetSeconds)
-	base := int64(0)
-	size := info.Size()
+	// 整轨 CUE 虚拟轨道（WAV）：合成段级 WAV 头后按区间流式服务
 	if track.CuePath != "" && track.EndOffsetSeconds > track.StartOffsetSeconds && track.Format == domain.FormatWAV {
-		if sliceBase, sliceSize, sliceErr := wavByteSlice(file, size, track.StartOffsetSeconds, track.EndOffsetSeconds); sliceErr == nil {
-			base, size = sliceBase, sliceSize
+		if handled := s.serveCueWAVSlice(c, file, info.Size(), track); handled {
+			return
 		}
+		// 合成失败则退回整文件服务（从头播放）
 	}
 	if !info.Mode().IsRegular() {
 		_ = file.Close()
@@ -2140,6 +2140,7 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		return
 	}
 
+	size := info.Size()
 	start, end := int64(0), size-1
 	status := consts.StatusOK
 	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 {
@@ -2158,7 +2159,7 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 			return
 		}
 		start, end = int64(startPos), int64(endPos)
-		if _, seekErr := file.Seek(start+base, io.SeekStart); seekErr != nil {
+		if _, seekErr := file.Seek(start, io.SeekStart); seekErr != nil {
 			_ = file.Close()
 			s.writeError(c, consts.StatusInternalServerError, "audio_seek_failed", seekErr.Error())
 			return
@@ -2178,53 +2179,134 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 	c.SetBodyStream(&closeOnRead{Reader: io.LimitReader(file, length), Closer: file}, int(length))
 }
 
-// wavByteSlice 解析 WAV 头（fmt 的 byteRate 与 data 块位置），
-// 返回虚拟轨道 [startSec, endSec) 对应的字节区间起点与长度。
-func wavByteSlice(file *os.File, fileSize int64, startSec, endSec float64) (int64, int64, error) {
+type wavLayout struct {
+	byteRate  int64
+	dataStart int64
+	dataSize  int64
+	fmtBody   []byte
+}
+
+func parseWAVLayout(file *os.File, fileSize int64) (wavLayout, error) {
 	header := make([]byte, 65536)
 	n, err := file.ReadAt(header, 0)
 	if err != nil && err != io.EOF {
-		return 0, 0, err
+		return wavLayout{}, err
 	}
 	header = header[:n]
 	if len(header) < 44 || string(header[0:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
-		return 0, 0, fmt.Errorf("不是标准 WAV 文件")
+		return wavLayout{}, fmt.Errorf("不是标准 WAV 文件")
 	}
-	var byteRate int64
-	var dataStart, dataSize int64 = -1, -1
+	var layout wavLayout
 	offset := 12
 	for offset+8 <= len(header) {
 		id := string(header[offset : offset+4])
 		chunkSize := int64(binary.LittleEndian.Uint32(header[offset+4 : offset+8]))
 		body := offset + 8
-		if id == "fmt " && body+16 <= len(header) {
-			byteRate = int64(binary.LittleEndian.Uint32(header[body+8 : body+12]))
+		switch id {
+		case "fmt ":
+			end := body + int(chunkSize)
+			if end > len(header) {
+				end = len(header)
+			}
+			layout.fmtBody = header[body:end]
+		case "data":
+			layout.dataStart = int64(body)
+			layout.dataSize = chunkSize
 		}
 		if id == "data" {
-			dataStart = int64(body)
-			dataSize = chunkSize
 			break
 		}
 		offset = body + int(chunkSize) + (int(chunkSize) & 1)
 	}
-	if dataStart < 0 || byteRate <= 0 {
-		return 0, 0, fmt.Errorf("WAV 头缺少 fmt/data 块")
+	if layout.dataStart < 0 || len(layout.fmtBody) < 16 {
+		return wavLayout{}, fmt.Errorf("WAV 头缺少 fmt/data 块")
 	}
-	if dataSize <= 0 || dataStart+dataSize > fileSize {
-		dataSize = fileSize - dataStart
+	layout.byteRate = int64(binary.LittleEndian.Uint32(layout.fmtBody[8:12]))
+	if layout.dataSize <= 0 || layout.dataStart+layout.dataSize > fileSize {
+		layout.dataSize = fileSize - layout.dataStart
 	}
-	startByte := dataStart + int64(startSec*float64(byteRate))
-	endByte := dataStart + int64(endSec*float64(byteRate))
-	if endByte > dataStart+dataSize {
-		endByte = dataStart + dataSize
+	return layout, nil
+}
+
+func buildWAVHeader(fmtBody []byte, dataLen int64) []byte {
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("RIFF")
+	binary.Write(buf, binary.LittleEndian, uint32(4+8+len(fmtBody)+8+dataLen))
+	buf.WriteString("WAVEfmt ")
+	binary.Write(buf, binary.LittleEndian, uint32(len(fmtBody)))
+	buf.Write(fmtBody)
+	buf.WriteString("data")
+	binary.Write(buf, binary.LittleEndian, uint32(dataLen))
+	return buf.Bytes()
+}
+
+// serveCueWAVSlice 为整轨 CUE 的 WAV 虚拟轨道合成段级 WAV 头
+// （RIFF/fmt + 段内 data 长度），随后流式返回父文件对应 PCM 区间，
+// 使浏览器可以按单轨时长正常解码与拖动。返回 true 表示请求已处理。
+func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize int64, track domain.Track) bool {
+	layout, err := parseWAVLayout(file, fileSize)
+	if err != nil || layout.byteRate <= 0 || layout.dataSize <= 0 {
+		return false
 	}
-	if startByte < dataStart {
-		startByte = dataStart
+	segDataStart := layout.dataStart + int64(track.StartOffsetSeconds*float64(layout.byteRate))
+	segDataLen := int64((track.EndOffsetSeconds - track.StartOffsetSeconds) * float64(layout.byteRate))
+	if segDataStart+segDataLen > layout.dataStart+layout.dataSize {
+		segDataLen = layout.dataStart + layout.dataSize - segDataStart
 	}
-	if endByte <= startByte {
-		return 0, 0, fmt.Errorf("WAV 字节区间无效")
+	if segDataLen <= 0 {
+		return false
 	}
-	return startByte, endByte - startByte, nil
+	header := buildWAVHeader(layout.fmtBody, segDataLen)
+	headerLen := int64(len(header))
+	virtualSize := headerLen + segDataLen
+
+	etag := `"` + track.Revision + `"`
+	c.Header("ETag", etag)
+	c.Header("Accept-Ranges", "bytes")
+	c.SetContentType("audio/wav")
+	if audioETagMatches(c.Request.Header.Peek("If-None-Match"), etag) {
+		_ = file.Close()
+		c.SetStatusCode(consts.StatusNotModified)
+		return true
+	}
+
+	start, end := int64(0), virtualSize-1
+	status := consts.StatusOK
+	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 {
+		if startPos, endPos, rangeErr := app.ParseByteRange(rawRange, int(virtualSize)); rangeErr == nil {
+			start, end = int64(startPos), int64(endPos)
+			status = consts.StatusPartialContent
+			c.Response.Header.SetContentRange(startPos, endPos, int(virtualSize))
+		} else {
+			_ = file.Close()
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", virtualSize))
+			c.SetStatusCode(consts.StatusRequestedRangeNotSatisfiable)
+			return true
+		}
+	}
+
+	// 虚拟流 [start,end] = 合成头段 + 父文件 PCM 段
+	var parts []io.Reader
+	if start < headerLen {
+		he := end
+		if he > headerLen-1 {
+			he = headerLen - 1
+		}
+		parts = append(parts, bytes.NewReader(header[start : he+1]))
+	}
+	if end >= headerLen {
+		ps := start
+		if ps < headerLen {
+			ps = headerLen
+		}
+		pcmOffset := layout.dataStart + (ps - headerLen)
+		count := end - ps + 1
+		parts = append(parts, io.NewSectionReader(file, pcmOffset, count))
+	}
+
+	c.SetStatusCode(status)
+	c.SetBodyStream(&closeOnRead{Reader: io.MultiReader(parts...), Closer: file}, int(end-start+1))
+	return true
 }
 
 func audioETagMatches(header []byte, etag string) bool {
