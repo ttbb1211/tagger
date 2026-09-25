@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ericwyn/tagger/internal/artwork"
+	"github.com/ericwyn/tagger/internal/cue"
 	"github.com/ericwyn/tagger/internal/domain"
 	"github.com/ericwyn/tagger/internal/tags"
 )
@@ -140,6 +141,11 @@ func (s *Scanner) scan(ctx context.Context, options ScanOptions) (Result, error)
 	tracks := make([]domain.Track, 0, len(paths)+len(previous))
 	changed, unchanged, added, missing := 0, 0, 0, 0
 
+	// 整轨 CUE：把发现的 cue 文件与配对的整轨音频绑定，
+	// 绑定成功的音频文件在下方 worker 中展开为一组虚拟轨道。
+	cueBinds, cueWarnings := s.bindCueSheets(paths)
+	warnings = append(warnings, cueWarnings...)
+
 	type extraction struct {
 		track  domain.Track
 		failed bool
@@ -158,6 +164,18 @@ func (s *Scanner) scan(ctx context.Context, options ScanOptions) (Result, error)
 			for path := range jobs {
 				relativePath, _ := filepath.Rel(s.opts.Root, path)
 				relativePath = filepath.ToSlash(relativePath)
+				if bind, isCue := cueBinds[path]; isCue {
+					// 整轨 CUE：一个音频文件展开为一组虚拟轨道
+					for _, vtrack := range s.extractCueTracks(ctx, path, relativePath, bind) {
+						prior, found := previous[vtrack.RelativePath]
+						if options.Mode != ScanFull && found && !prior.Missing && prior.SyncState == domain.SyncIndexed && prior.FileFingerprint == fingerprints[path] {
+							results <- extraction{track: prior, path: path, reused: true}
+							continue
+						}
+						results <- extraction{track: vtrack, path: path, added: !found}
+					}
+					continue
+				}
 				prior, found := previous[relativePath]
 				if options.Mode != ScanFull && found && !prior.Missing && prior.SyncState == domain.SyncIndexed && prior.FileFingerprint == fingerprints[path] {
 					results <- extraction{track: prior, path: path, reused: true}
@@ -292,6 +310,9 @@ func (s *Scanner) ScanTrack(ctx context.Context, relativePath string) (domain.Tr
 	clean := filepath.Clean(filepath.FromSlash(relativePath))
 	if relativePath == "" || clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return domain.Track{}, fmt.Errorf("invalid relative track path")
+	}
+	if domain.IsCueVirtualPath(clean) {
+		return s.rescanCueTrack(ctx, clean)
 	}
 	absolutePath := filepath.Join(s.opts.Root, clean)
 	info, err := os.Lstat(absolutePath)
@@ -446,7 +467,7 @@ func (s *Scanner) discoverDepth(ctx context.Context, maxDepth int, targets ...st
 			if strings.HasPrefix(entry.Name(), ".") {
 				return nil
 			}
-			if isSupportedAudio(path) {
+			if isSupportedAudio(path) || strings.EqualFold(filepath.Ext(path), ".cue") {
 				paths = append(paths, path)
 				fingerprints[path] = fileFingerprint(path)
 			}
@@ -917,4 +938,227 @@ func coverTone(seed string) domain.CoverTone {
 func shortHash(value string) string {
 	hash := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(hash[:8])
+}
+
+// cueBind 是一份 cue 文本与其配对整轨音频的绑定。
+type cueBind struct {
+	sheet  *cue.Sheet
+	cueAbs string
+	cueRel string
+}
+
+// bindCueSheets 解析发现到的 .cue 文件，并按 FILE 行/同名规则配对整轨音频。
+// 配对成功返回 音频绝对路径 -> 绑定；找不到配对音频的 cue 记入 warnings，
+// 对应音频将按普通单文件索引（与旧行为一致）。
+func (s *Scanner) bindCueSheets(paths []string) (map[string]cueBind, []string) {
+	binds := make(map[string]cueBind)
+	warnings := make([]string, 0)
+	audioSet := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		audioSet[path] = true
+	}
+	for _, path := range paths {
+		if !strings.EqualFold(filepath.Ext(path), ".cue") {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			warnings = append(warnings, "读取 cue 失败: "+err.Error())
+			continue
+		}
+		sheet, err := cue.ParseBytes(data)
+		if err != nil {
+			warnings = append(warnings, "解析 cue 失败: "+filepath.Base(path)+" "+err.Error())
+			continue
+		}
+		dir := filepath.Dir(path)
+		candidates := make([]string, 0, 3)
+		if sheet.File != "" {
+			candidates = append(candidates, filepath.Join(dir, filepath.FromSlash(sheet.File)))
+		}
+		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		for _, ext := range []string{".wav", ".flac"} {
+			candidates = append(candidates, filepath.Join(dir, base+ext))
+		}
+		paired := ""
+		for _, candidate := range candidates {
+			if audioSet[candidate] {
+				paired = candidate
+				break
+			}
+		}
+		if paired == "" {
+			warnings = append(warnings, "cue 未配对到整轨音频（跳过虚拟轨道）: "+filepath.Base(path))
+			continue
+		}
+		cueRel, err := filepath.Rel(s.opts.Root, path)
+		if err != nil {
+			continue
+		}
+		binds[paired] = cueBind{sheet: sheet, cueAbs: path, cueRel: filepath.ToSlash(cueRel)}
+	}
+	return binds, warnings
+}
+
+// extractCueTracks 把一份整轨音频按 cue 展开为虚拟轨道。父音频探针一次，
+// 提供时长（末轨收尾）与内嵌封面；每轨元数据来自 cue 条目。
+func (s *Scanner) extractCueTracks(ctx context.Context, audioAbs, audioRel string, bind cueBind) []domain.Track {
+	snapshot, readErr := s.engine.Read(ctx, audioAbs)
+	info, statErr := os.Stat(audioAbs)
+	var parentDuration float64
+	if readErr == nil {
+		parentDuration = snapshotDurationSeconds(snapshot)
+	}
+	format, ok := formatFromPath(audioAbs)
+	if !ok {
+		return nil
+	}
+	total := len(bind.sheet.Tracks)
+	tracks := make([]domain.Track, 0, total)
+	for i, entry := range bind.sheet.Tracks {
+		start := entry.Index01
+		var end float64
+		if i+1 < len(bind.sheet.Tracks) {
+			end = bind.sheet.Tracks[i+1].Index01
+		} else {
+			end = parentDuration
+		}
+		if end < start {
+			end = start
+		}
+		pseudoRel := domain.CueVirtualPath(audioRel, entry.Number)
+		track := fallbackTrack(pseudoRel, format)
+		track.ID = "trk-" + shortHash(pseudoRel)
+		track.FileName = filepath.Base(bind.cueAbs)
+		track.RelativePath = pseudoRel
+		track.FolderID = folderID(filepath.ToSlash(filepath.Dir(audioRel)))
+		track.CoverTone = coverTone(track.ID)
+		if info != nil {
+			track.SizeBytes = info.Size()
+			track.ModifiedAt = info.ModTime().Format("2006-01-02 15:04")
+			writable := info.Mode().Perm()&0o222 != 0
+			if cueInfo, cueErr := os.Stat(bind.cueAbs); cueErr == nil {
+				writable = writable && cueInfo.Mode().Perm()&0o222 != 0
+			}
+			track.Writable = writable
+		}
+		track.FileFingerprint = fileFingerprint(audioAbs)
+		track.CuePath = bind.cueRel
+		track.CueTrackNumber = entry.Number
+		track.StartOffsetSeconds = start
+		track.EndOffsetSeconds = end
+		track.DurationSeconds = int64(end - start)
+
+		track.Title = firstNonEmpty(entry.Title, fmt.Sprintf("第 %d 轨", entry.Number))
+		if performer := firstNonEmpty(entry.Performer, bind.sheet.Performer); performer != "" {
+			track.Artists = []string{performer}
+		}
+		track.Album = bind.sheet.Title
+		if bind.sheet.Performer != "" {
+			track.AlbumArtists = []string{bind.sheet.Performer}
+		}
+		number := entry.Number
+		track.TrackNumber = &number
+		track.TrackTotal = &total
+		if disc := discNumberFromFolder(filepath.ToSlash(filepath.Dir(audioRel))); disc > 0 {
+			track.DiscNumber = &disc
+		}
+		if date := bind.sheet.Rem["DATE"]; len(date) >= 4 {
+			if year, err := strconv.Atoi(strings.TrimSpace(date[:4])); err == nil {
+				track.Year = &year
+			}
+		}
+		if genre := bind.sheet.Rem["GENRE"]; genre != "" {
+			track.Genres = []string{genre}
+		}
+		track.ISRC = entry.ISRC
+		if readErr == nil {
+			track.ArtworkCount = snapshot.ArtworkCount
+		}
+		if lyrics, sidecar := readCueSidecar(audioRel, entry.Number); lyrics != "" {
+			track.Lyrics = lyrics
+			track.LyricsSidecar = sidecar
+		}
+		track.Health = healthFor(track)
+		track.SyncState = domain.SyncIndexed
+		if readErr != nil {
+			// 父音频探针失败（理论上 wav/flac 不应发生）：仍保留 cue 元数据
+			track.Health = domain.HealthParseError
+			track.ParseError = readErr.Error()
+		}
+		// 虚拟轨道的 revision 描述父音频文件状态：cue 元数据写入不改父文件，
+		// 因此 revision 稳定，可与封面/歌词/元数据各写入流的守卫对齐。
+		track.Revision = FileRevision(parentRel, info, snapshot.Raw)
+		tracks = append(tracks, track)
+	}
+	return tracks
+}
+
+// rescanCueTrack 重新解析单条虚拟轨道（单轨重扫入口）。
+func (s *Scanner) rescanCueTrack(ctx context.Context, pseudoRel string) (domain.Track, error) {
+	parentRel, number, err := domain.ParseCueVirtualPath(pseudoRel)
+	if err != nil {
+		return domain.Track{}, err
+	}
+	cueRel := domain.CueSheetPathFor(parentRel)
+	cueAbs := filepath.Join(s.opts.Root, filepath.FromSlash(cueRel))
+	data, err := os.ReadFile(cueAbs)
+	if err != nil {
+		return domain.Track{}, fmt.Errorf("读取 cue 文件: %w", err)
+	}
+	sheet, err := cue.ParseBytes(data)
+	if err != nil {
+		return domain.Track{}, err
+	}
+	audioAbs := filepath.Join(s.opts.Root, filepath.FromSlash(parentRel))
+	for _, track := range s.extractCueTracks(ctx, audioAbs, parentRel, cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: cueRel}) {
+		if track.CueTrackNumber == number {
+			return track, nil
+		}
+	}
+	return domain.Track{}, fmt.Errorf("cue 中没有第 %d 轨", number)
+}
+
+// readCueSidecar 读取虚拟轨道的歌词 sidecar（父音频.NNN.lrc）。
+func readCueSidecar(audioRel string, number int) (string, *domain.SidecarInfo) {
+	sidecarRel := domain.CueSidecarPath(audioRel, number)
+	sidecarAbs := filepath.Join(s.opts.Root, filepath.FromSlash(sidecarRel))
+	info, err := os.Lstat(sidecarAbs)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", nil
+	}
+	sidecar := &domain.SidecarInfo{Exists: true, SizeBytes: info.Size(), ModifiedAt: info.ModTime().Format("2006-01-02 15:04")}
+	if info.Size() > domain.MaxSidecarLyricsBytes {
+		return "", sidecar
+	}
+	content, err := os.ReadFile(sidecarAbs)
+	if err != nil {
+		return "", sidecar
+	}
+	return string(content), sidecar
+}
+
+// discNumberFromFolder 从 CD1/CD2 目录名推断碟号。
+func discNumberFromFolder(folderRelPath string) int {
+	base := filepath.Base(folderRelPath)
+	matches := discNumberPattern.FindStringSubmatch(strings.ToUpper(base))
+	if len(matches) < 2 {
+		return 0
+	}
+	value, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+var discNumberPattern = regexp.MustCompile(`\bcd(\d+)\b`)
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

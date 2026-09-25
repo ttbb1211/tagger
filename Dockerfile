@@ -29,6 +29,8 @@ COPY internal/ ./internal/
 COPY web/ ./web/
 COPY --from=frontend /src/frontend/dist/ ./web/dist/
 
+RUN go mod tidy
+
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath \

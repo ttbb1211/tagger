@@ -89,6 +89,7 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: '0'
         run: |
+          go mod tidy
           mkdir -p dist
           go build -trimpath \
             -ldflags "-X github.com/ericwyn/tagger/internal/version.Version=$VERSION" \

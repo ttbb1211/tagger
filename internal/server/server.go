@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2087,6 +2088,14 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		s.writeError(c, consts.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
+	// 整轨 CUE 虚拟轨道：实际读取父音频文件
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		if parentRel, _, parseErr := domain.ParseCueVirtualPath(ref.RelativePath); parseErr == nil {
+			ref.RelativePath = parentRel
+			ref.AbsolutePath = filepath.Join(s.writer.Root(), filepath.FromSlash(parentRel))
+		}
+	}
+
 	file, err := s.writer.OpenRead(ref)
 	if errors.Is(err, filewrite.ErrPathOutsideRoot) {
 		s.writeError(c, consts.StatusForbidden, "forbidden", "文件路径不在曲库安全边界内")
@@ -2106,6 +2115,15 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		s.writeError(c, consts.StatusInternalServerError, "audio_stat_failed", err.Error())
 		return
 	}
+
+	// 整轨 CUE 虚拟轨道：服务区间限制在 [StartOffsetSeconds, EndOffsetSeconds)
+	base := int64(0)
+	size := info.Size()
+	if track.CuePath != "" && track.EndOffsetSeconds > track.StartOffsetSeconds && track.Format == domain.FormatWAV {
+		if sliceBase, sliceSize, sliceErr := wavByteSlice(file, size, track.StartOffsetSeconds, track.EndOffsetSeconds); sliceErr == nil {
+			base, size = sliceBase, sliceSize
+		}
+	}
 	if !info.Mode().IsRegular() {
 		_ = file.Close()
 		s.writeError(c, consts.StatusNotFound, "audio_not_found", "音频文件不存在")
@@ -2122,7 +2140,6 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		return
 	}
 
-	size := info.Size()
 	start, end := int64(0), size-1
 	status := consts.StatusOK
 	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 {
@@ -2141,7 +2158,7 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 			return
 		}
 		start, end = int64(startPos), int64(endPos)
-		if _, seekErr := file.Seek(start, io.SeekStart); seekErr != nil {
+		if _, seekErr := file.Seek(start+base, io.SeekStart); seekErr != nil {
 			_ = file.Close()
 			s.writeError(c, consts.StatusInternalServerError, "audio_seek_failed", seekErr.Error())
 			return
@@ -2159,6 +2176,55 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 	}
 	c.SetStatusCode(status)
 	c.SetBodyStream(&closeOnRead{Reader: io.LimitReader(file, length), Closer: file}, int(length))
+}
+
+// wavByteSlice 解析 WAV 头（fmt 的 byteRate 与 data 块位置），
+// 返回虚拟轨道 [startSec, endSec) 对应的字节区间起点与长度。
+func wavByteSlice(file *os.File, fileSize int64, startSec, endSec float64) (int64, int64, error) {
+	header := make([]byte, 65536)
+	n, err := file.ReadAt(header, 0)
+	if err != nil && err != io.EOF {
+		return 0, 0, err
+	}
+	header = header[:n]
+	if len(header) < 44 || string(header[0:4]) != "RIFF" || string(header[8:12]) != "WAVE" {
+		return 0, 0, fmt.Errorf("不是标准 WAV 文件")
+	}
+	var byteRate int64
+	var dataStart, dataSize int64 = -1, -1
+	offset := 12
+	for offset+8 <= len(header) {
+		id := string(header[offset : offset+4])
+		chunkSize := int64(binary.LittleEndian.Uint32(header[offset+4 : offset+8]))
+		body := offset + 8
+		if id == "fmt " && body+16 <= len(header) {
+			byteRate = int64(binary.LittleEndian.Uint32(header[body+8 : body+12]))
+		}
+		if id == "data" {
+			dataStart = body
+			dataSize = chunkSize
+			break
+		}
+		offset = body + int(chunkSize) + (int(chunkSize) & 1)
+	}
+	if dataStart < 0 || byteRate <= 0 {
+		return 0, 0, fmt.Errorf("WAV 头缺少 fmt/data 块")
+	}
+	if dataSize <= 0 || dataStart+dataSize > fileSize {
+		dataSize = fileSize - dataStart
+	}
+	startByte := dataStart + int64(startSec*float64(byteRate))
+	endByte := dataStart + int64(endSec*float64(byteRate))
+	if endByte > dataStart+dataSize {
+		endByte = dataStart + dataSize
+	}
+	if startByte < dataStart {
+		startByte = dataStart
+	}
+	if endByte <= startByte {
+		return 0, 0, fmt.Errorf("WAV 字节区间无效")
+	}
+	return startByte, endByte - startByte, nil
 }
 
 func audioETagMatches(header []byte, etag string) bool {

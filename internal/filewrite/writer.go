@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/ericwyn/tagger/internal/artwork"
+	"github.com/ericwyn/tagger/internal/cue"
 	"github.com/ericwyn/tagger/internal/domain"
 	"github.com/ericwyn/tagger/internal/library"
 	"github.com/ericwyn/tagger/internal/mutation"
@@ -214,6 +215,9 @@ func (w *Writer) OpenRead(ref library.FileRef) (*os.File, error) {
 // without exposing the absolute path to callers. The returned map is owned by
 // the caller and can be safely modified.
 func (w *Writer) ReadRawTags(ctx context.Context, ref library.FileRef) (map[string][]string, error) {
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		return w.readCueRawTags(ref)
+	}
 	path, err := w.containedPath(ref)
 	if err != nil {
 		return nil, err
@@ -225,13 +229,64 @@ func (w *Writer) ReadRawTags(ctx context.Context, ref library.FileRef) (map[stri
 	return cloneRawTags(snapshot.Raw), nil
 }
 
+// cueParentRef 把虚拟轨道引用换成其父整轨音频的引用。
+func (w *Writer) cueParentRef(ref library.FileRef) (library.FileRef, int, error) {
+	parentRel, number, err := domain.ParseCueVirtualPath(ref.RelativePath)
+	if err != nil {
+		return library.FileRef{}, 0, err
+	}
+	parent := ref
+	parent.RelativePath = parentRel
+	parent.AbsolutePath = filepath.Join(w.Root(), filepath.FromSlash(parentRel))
+	return parent, number, nil
+}
+
+// cueSheetRef 返回虚拟轨道对应 cue 文件的引用。
+func (w *Writer) cueSheetRef(ref library.FileRef) (library.FileRef, error) {
+	parent, _, err := w.cueParentRef(ref)
+	if err != nil {
+		return library.FileRef{}, err
+	}
+	sheet := parent
+	sheet.RelativePath = domain.CueSheetPathFor(parent.RelativePath)
+	sheet.AbsolutePath = filepath.Join(w.Root(), filepath.FromSlash(sheet.RelativePath))
+	return sheet, nil
+}
+
+// readCueRawTags 读取虚拟轨道在 cue 中的标准标签视图。
+func (w *Writer) readCueRawTags(ref library.FileRef) (map[string][]string, error) {
+	sheetRef, err := w.cueSheetRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	path, err := w.containedPath(sheetRef)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	sheet, err := cue.ParseBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	parent, number, err := w.cueParentRef(ref)
+	if err != nil {
+		return nil, err
+	}
+	_ = parent
+	return sheet.RawTags(number), nil
+}
+
 // ReadSidecar reads the optional same-basename LRC file after applying the
-// audio file's library-root and symlink checks.
+// audio file's library-root and symlink checks. Cue virtual tracks use a
+// per-track sidecar (<parent>.<NNN>.lrc).
 func (w *Writer) ReadSidecar(ctx context.Context, ref library.FileRef) (SidecarSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return SidecarSnapshot{}, err
 	}
-	path, err := w.containedSidecarPath(ref)
+	path, err := w.sidecarPathFor(ref)
 	if err != nil {
 		return SidecarSnapshot{}, err
 	}
@@ -245,6 +300,29 @@ func (w *Writer) WriteSidecar(ctx context.Context, ref library.FileRef, baseRevi
 	if !ref.Format.IsSupported() {
 		return SidecarResult{}, ErrUnsupportedFormat
 	}
+	// 虚拟轨道：音频 revision 基于父整轨文件，sidecar 落在 <父音频>.<NNN>.lrc
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		parentRel, number, err := domain.ParseCueVirtualPath(ref.RelativePath)
+		if err != nil {
+			return SidecarResult{}, err
+		}
+		parent, _, err := w.cueParentRef(ref)
+		if err != nil {
+			return SidecarResult{}, err
+		}
+		sidecar := parent
+		sidecar.RelativePath = domain.CueSidecarPath(parentRel, number)
+		ref = parent
+		path, err := w.containedPath(ref)
+		if err != nil {
+			return SidecarResult{}, err
+		}
+		sidecarPath, err := w.containedPath(sidecar)
+		if err != nil {
+			return SidecarResult{}, err
+		}
+		return w.writeSidecarFlow(ctx, ref, path, sidecarPath, baseRevision, baseSidecarRevision, content, dryRun)
+	}
 	path, err := w.containedPath(ref)
 	if err != nil {
 		return SidecarResult{}, err
@@ -253,6 +331,12 @@ func (w *Writer) WriteSidecar(ctx context.Context, ref library.FileRef, baseRevi
 	if err != nil {
 		return SidecarResult{}, err
 	}
+	return w.writeSidecarFlow(ctx, ref, path, sidecarPath, baseRevision, baseSidecarRevision, content, dryRun)
+}
+
+// writeSidecarFlow 是普通文件与 cue 虚拟轨道共用的 sidecar 写入流程。
+// path 为音频文件（revision 依据），sidecarPath 为歌词文件。
+func (w *Writer) writeSidecarFlow(ctx context.Context, ref library.FileRef, path, sidecarPath, baseRevision, baseSidecarRevision string, content *string, dryRun bool) (SidecarResult, error) {
 	unlock := mutation.Acquire(path)
 	defer unlock()
 
@@ -343,6 +427,11 @@ func (w *Writer) WriteSidecar(ctx context.Context, ref library.FileRef, baseRevi
 }
 
 func (w *Writer) Write(ctx context.Context, ref library.FileRef, baseRevision string, patch domain.TagPatch, dryRun bool) (Result, error) {
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		return w.mutateCue(ctx, ref, baseRevision, dryRun, func(raw map[string][]string) (map[string][]string, []FieldDiff, error) {
+			return compilePatch(raw, patch)
+		})
+	}
 	return w.mutate(ctx, ref, baseRevision, dryRun, func(raw map[string][]string) (map[string][]string, []FieldDiff, error) {
 		return compilePatch(raw, patch)
 	})
@@ -352,9 +441,16 @@ func (w *Writer) Restore(ctx context.Context, ref library.FileRef, baseRevision 
 	if target == nil {
 		return Result{}, fmt.Errorf("%w: restore target is missing", ErrInvalidPatch)
 	}
-	result, err := w.mutate(ctx, ref, baseRevision, dryRun, func(raw map[string][]string) (map[string][]string, []FieldDiff, error) {
+	compile := func(raw map[string][]string) (map[string][]string, []FieldDiff, error) {
 		return compileRestore(raw, target)
-	})
+	}
+	var result Result
+	var err error
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		result, err = w.mutateCue(ctx, ref, baseRevision, dryRun, compile)
+	} else {
+		result, err = w.mutate(ctx, ref, baseRevision, dryRun, compile)
+	}
 	if err != nil {
 		return Result{}, err
 	}
@@ -365,6 +461,14 @@ func (w *Writer) Restore(ctx context.Context, ref library.FileRef, baseRevision 
 func (w *Writer) ReadArtwork(ctx context.Context, ref library.FileRef, index int) (artwork.Asset, error) {
 	if index < 0 || index > 31 {
 		return artwork.Asset{}, ErrArtworkIndex
+	}
+	// 虚拟轨道共享父整轨文件的内嵌封面
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		parent, _, err := w.cueParentRef(ref)
+		if err != nil {
+			return artwork.Asset{}, err
+		}
+		return w.ReadArtwork(ctx, parent, index)
 	}
 	engine, ok := w.engine.(tags.ArtworkEngine)
 	if !ok {
@@ -396,6 +500,14 @@ func (w *Writer) WriteArtwork(ctx context.Context, ref library.FileRef, baseRevi
 	}
 	if index < 0 || index > 31 {
 		return ArtworkResult{}, ErrArtworkIndex
+	}
+	// 虚拟轨道的封面写入嵌入父整轨文件（专辑级封面，全部虚拟轨共享）
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		parent, _, err := w.cueParentRef(ref)
+		if err != nil {
+			return ArtworkResult{}, err
+		}
+		return w.WriteArtwork(ctx, parent, baseRevision, index, target, dryRun)
 	}
 	engine, ok := w.engine.(tags.ArtworkEngine)
 	if !ok {
@@ -1080,4 +1192,162 @@ func syncFile(path string) error {
 	}
 	defer file.Close()
 	return file.Sync()
+}
+
+// mutateCue 是整轨 CUE 虚拟轨道的写管线：变更只落到 cue 文本文件，
+// 父音频文件保持原样。revision 守卫基于父音频文件状态（与虚拟轨道
+// 的 track.Revision 语义一致）。
+func (w *Writer) mutateCue(ctx context.Context, ref library.FileRef, baseRevision string, dryRun bool, compile updateCompiler) (Result, error) {
+	if !ref.Format.IsSupported() {
+		return Result{}, ErrUnsupportedFormat
+	}
+	parentRef, number, err := w.cueParentRef(ref)
+	if err != nil {
+		return Result{}, err
+	}
+	sheetRef, err := w.cueSheetRef(ref)
+	if err != nil {
+		return Result{}, err
+	}
+	cuePath, err := w.containedPath(sheetRef)
+	if err != nil {
+		return Result{}, err
+	}
+	unlock := mutation.Acquire(cuePath)
+	defer unlock()
+
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
+	parentPath, err := w.containedPath(parentRef)
+	if err != nil {
+		return Result{}, err
+	}
+	parentInfo, err := os.Stat(parentPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("stat parent audio: %w", err)
+	}
+	parentSnapshot, err := w.engine.Read(ctx, parentPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("read parent audio: %w", err)
+	}
+	currentRevision := scanner.FileRevision(parentRef.RelativePath, parentInfo, parentSnapshot.Raw)
+	if baseRevision == "" || baseRevision != currentRevision {
+		return Result{}, &RevisionConflictError{Expected: baseRevision, Current: currentRevision}
+	}
+	data, err := os.ReadFile(cuePath)
+	if err != nil {
+		return Result{}, fmt.Errorf("read cue file: %w", err)
+	}
+	sheet, err := cue.ParseBytes(data)
+	if err != nil {
+		return Result{}, fmt.Errorf("parse cue file: %w", err)
+	}
+	before := sheet.RawTags(number)
+	updates, diffs, err := compile(before)
+	if err != nil {
+		return Result{}, err
+	}
+	result := Result{
+		BaseRevision:    baseRevision,
+		CurrentRevision: currentRevision,
+		DryRun:          dryRun,
+		Changed:         len(diffs) > 0,
+		Diff:            diffs,
+		Warnings:        []string{},
+		BeforeTags:      cloneRawTags(before),
+	}
+	if dryRun || len(diffs) == 0 {
+		result.AfterTags = cloneRawTags(before)
+		return result, nil
+	}
+	appliedKeys, _ := cue.SupportedFields(updateKeys(updates))
+	newData, _, err := cue.ApplyUpdates(data, number, updates)
+	if err != nil {
+		return Result{}, fmt.Errorf("apply cue updates: %w", err)
+	}
+	for _, diff := range diffs {
+		if !slices.Contains(appliedKeys, strings.ToUpper(diff.Field)) {
+			result.Warnings = append(result.Warnings, "CUE 不支持字段 "+diff.Field+"，仅保存到曲库索引，未写入 cue 文件")
+		}
+	}
+	verifySheet, err := cue.ParseBytes(newData)
+	if err != nil {
+		return Result{}, fmt.Errorf("verify cue file: %w", err)
+	}
+	if err := verifyUpdates(verifySheet.RawTags(number), filterUpdates(updates, appliedKeys)); err != nil {
+		return Result{}, fmt.Errorf("%w: %v", ErrVerification, err)
+	}
+	if err := writeCueAtomic(cuePath, newData); err != nil {
+		return Result{}, err
+	}
+	if err := syncDirectory(filepath.Dir(cuePath)); err != nil {
+		result.Warnings = append(result.Warnings, "目录同步失败："+err.Error())
+	}
+	afterSheet, err := cue.ParseBytes(newData)
+	if err != nil {
+		return Result{}, fmt.Errorf("parse written cue: %w", err)
+	}
+	result.AfterTags = cloneRawTags(afterSheet.RawTags(number))
+	// 父音频未变，revision 保持不变
+	result.CurrentRevision = currentRevision
+	return result, nil
+}
+
+func updateKeys(updates map[string][]string) []string {
+	keys := make([]string, 0, len(updates))
+	for key := range updates {
+		keys = append(keys, strings.ToUpper(key))
+	}
+	return keys
+}
+
+func filterUpdates(updates map[string][]string, keys []string) map[string][]string {
+	allowed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		allowed[strings.ToUpper(key)] = true
+	}
+	filtered := make(map[string][]string, len(keys))
+	for key, value := range updates {
+		if allowed[strings.ToUpper(key)] {
+			filtered[key] = value
+		}
+	}
+	return filtered
+}
+
+// writeCueAtomic 原子写入 cue 文本文件（同目录临时文件 + rename）。
+func writeCueAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, ".cue-tagger-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary cue file: %w", err)
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return fmt.Errorf("write temporary cue file: %w", err)
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return fmt.Errorf("sync temporary cue file: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("close temporary cue file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("atomically replace cue file: %w", err)
+	}
+	committed = true
+	if err := syncDirectory(dir); err != nil {
+		// cue 是小文本文件，目录同步失败仅提示
+		_ = err
+	}
+	return nil
 }

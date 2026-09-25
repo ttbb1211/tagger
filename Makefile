@@ -15,6 +15,7 @@ build-frontend:
 	touch web/dist/.gitkeep
 
 build: build-frontend
+	go mod tidy
 	mkdir -p dist
 	CGO_ENABLED=0 go build -trimpath \
 		-ldflags "-X github.com/ericwyn/tagger/internal/version.Version=$(VERSION)" \
@@ -33,6 +34,7 @@ dev-frontend-mock:
 test: test-go test-frontend
 
 test-go:
+	go mod tidy
 	go test ./...
 
 test-frontend:
@@ -44,6 +46,7 @@ test-integration:
 		-run 'TestAudioAPIWithCopiedTestMusic|TestBatchEditWorkerWithCopiedTestMusic|TestProbeTestMusicCorpus|TestScannerReadsTestMusicCorpus|TestWriterWithCopiedTestMusicMP3AndFLAC|TestWriterWithCopiedTestMusicArtwork|TestSuccessfulRealTagWriteCreatesPersistentRevision|TestSuccessfulRealSidecarWriteCreatesPersistentRevision' -count=1 -v
 
 lint:
+	go mod tidy
 	go vet ./...
 	cd frontend && npm run lint
 

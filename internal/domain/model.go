@@ -1,6 +1,11 @@
 package domain
 
-import "strings"
+import (
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
 
 // TrackFormat is the set of audio container families certified by Tagger.
 type TrackFormat string
@@ -42,6 +47,49 @@ func TrackFormatFromExtension(extension string) (TrackFormat, bool) {
 	default:
 		return "", false
 	}
+}
+
+const cueVirtualSeparator = "#cue:"
+
+// IsCueVirtualPath reports whether the relative path identifies a virtual
+// track carved out of a whole-track album by a cue sheet.
+func IsCueVirtualPath(relativePath string) bool {
+	return strings.Contains(relativePath, cueVirtualSeparator)
+}
+
+// CueVirtualPath builds the stable pseudo path of a cue virtual track.
+func CueVirtualPath(parentAudioPath string, trackNumber int) string {
+	return parentAudioPath + cueVirtualSeparator + strconv.Itoa(trackNumber)
+}
+
+// ParseCueVirtualPath splits a virtual track path into its parent audio file
+// and the cue track number.
+func ParseCueVirtualPath(relativePath string) (parentAudioPath string, trackNumber int, err error) {
+	index := strings.Index(relativePath, cueVirtualSeparator)
+	if index < 0 {
+		return "", 0, fmt.Errorf("not a cue virtual track path: %s", relativePath)
+	}
+	parent := relativePath[:index]
+	number, err := strconv.Atoi(relativePath[index+len(cueVirtualSeparator):])
+	if err != nil || number <= 0 {
+		return "", 0, fmt.Errorf("invalid cue virtual track number in %s", relativePath)
+	}
+	return parent, number, nil
+}
+
+// CueSheetPathFor derives the conventional cue sheet path of a whole-track
+// audio file (same base name, .cue extension).
+func CueSheetPathFor(parentAudioPath string) string {
+	ext := filepath.Ext(parentAudioPath)
+	return strings.TrimSuffix(parentAudioPath, ext) + ".cue"
+}
+
+// CueSidecarPath derives the lyrics sidecar path of a cue virtual track
+// (parent base + track number, e.g. CD1.03.lrc).
+func CueSidecarPath(parentAudioPath string, trackNumber int) string {
+	ext := filepath.Ext(parentAudioPath)
+	base := strings.TrimSuffix(parentAudioPath, ext)
+	return fmt.Sprintf("%s.%03d.lrc", base, trackNumber)
 }
 
 type TrackHealth string
@@ -158,7 +206,14 @@ type Track struct {
 	MusicBrainzArtistIDs []string        `json:"musicbrainzArtistIds"`
 	AcoustID             string          `json:"acoustidId"`
 	AcoustIDFingerprint  string          `json:"acoustidFingerprint"`
-	TagHints             []TagHint       `json:"tagHints"`
+	// 整轨 CUE 虚拟轨道：CuePath 非空表示该曲目是 CuePath（相对路径）里
+	// [StartOffsetSeconds, EndOffsetSeconds) 区间的一段，元数据写入只改
+	// cue 文本文件，音频文件保持原样。
+	CuePath            string  `json:"cuePath,omitempty"`
+	CueTrackNumber     int     `json:"cueTrackNumber,omitempty"`
+	StartOffsetSeconds float64 `json:"startOffsetSeconds,omitempty"`
+	EndOffsetSeconds   float64 `json:"endOffsetSeconds,omitempty"`
+	TagHints           []TagHint       `json:"tagHints"`
 	TagIssues            []TagIssue      `json:"tagIssues"`
 	LyricsSidecar        *SidecarInfo    `json:"lyricsSidecar,omitempty"`
 	ArtworkCount         int             `json:"artworkCount"`
