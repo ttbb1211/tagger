@@ -2231,7 +2231,7 @@ func parseWAVLayout(file *os.File, fileSize int64) (wavLayout, error) {
 func buildWAVHeader(fmtBody []byte, dataLen int64) []byte {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString("RIFF")
-	binary.Write(buf, binary.LittleEndian, uint32(4+8+len(fmtBody)+8+dataLen))
+	binary.Write(buf, binary.LittleEndian, uint32(4+8+len(fmtBody)+8+int(dataLen)))
 	buf.WriteString("WAVEfmt ")
 	binary.Write(buf, binary.LittleEndian, uint32(len(fmtBody)))
 	buf.Write(fmtBody)
