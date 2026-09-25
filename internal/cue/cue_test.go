@@ -115,7 +115,7 @@ func TestApplyUpdatesGlobalAndInsertion(t *testing.T) {
 	if sheet.Rem["GENRE"] != "Mandopop" {
 		t.Fatalf("genre: %q", sheet.Rem["GENRE"])
 	}
-	if !strings.Contains(newText, "FILE ") {
+	if !strings.Contains(string(newText), "FILE ") {
 		t.Fatalf("FILE line lost")
 	}
 }

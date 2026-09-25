@@ -1007,7 +1007,10 @@ func (s *Scanner) extractCueTracks(ctx context.Context, audioAbs, audioRel strin
 	info, statErr := os.Stat(audioAbs)
 	var parentDuration float64
 	if readErr == nil {
-		parentDuration = snapshotDurationSeconds(snapshot)
+		parentDuration = float64(snapshotDurationSeconds(snapshot))
+	}
+	if statErr != nil {
+		info = nil
 	}
 	format, ok := formatFromPath(audioAbs)
 	if !ok {
@@ -1075,7 +1078,7 @@ func (s *Scanner) extractCueTracks(ctx context.Context, audioAbs, audioRel strin
 		if readErr == nil {
 			track.ArtworkCount = snapshot.ArtworkCount
 		}
-		if lyrics, sidecar := readCueSidecar(audioRel, entry.Number); lyrics != "" {
+		if lyrics, sidecar := s.readCueSidecar(audioRel, entry.Number); lyrics != "" {
 			track.Lyrics = lyrics
 			track.LyricsSidecar = sidecar
 		}
@@ -1088,7 +1091,7 @@ func (s *Scanner) extractCueTracks(ctx context.Context, audioAbs, audioRel strin
 		}
 		// 虚拟轨道的 revision 描述父音频文件状态：cue 元数据写入不改父文件，
 		// 因此 revision 稳定，可与封面/歌词/元数据各写入流的守卫对齐。
-		track.Revision = FileRevision(parentRel, info, snapshot.Raw)
+		track.Revision = FileRevision(audioRel, info, snapshot.Raw)
 		tracks = append(tracks, track)
 	}
 	return tracks
@@ -1120,7 +1123,7 @@ func (s *Scanner) rescanCueTrack(ctx context.Context, pseudoRel string) (domain.
 }
 
 // readCueSidecar 读取虚拟轨道的歌词 sidecar（父音频.NNN.lrc）。
-func readCueSidecar(audioRel string, number int) (string, *domain.SidecarInfo) {
+func (s *Scanner) readCueSidecar(audioRel string, number int) (string, *domain.SidecarInfo) {
 	sidecarRel := domain.CueSidecarPath(audioRel, number)
 	sidecarAbs := filepath.Join(s.opts.Root, filepath.FromSlash(sidecarRel))
 	info, err := os.Lstat(sidecarAbs)
