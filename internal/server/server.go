@@ -2201,7 +2201,7 @@ func wavByteSlice(file *os.File, fileSize int64, startSec, endSec float64) (int6
 			byteRate = int64(binary.LittleEndian.Uint32(header[body+8 : body+12]))
 		}
 		if id == "data" {
-			dataStart = body
+			dataStart = int64(body)
 			dataSize = chunkSize
 			break
 		}

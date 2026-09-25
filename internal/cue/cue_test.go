@@ -36,11 +36,9 @@ func TestParse(t *testing.T) {
 	if len(sheet.Tracks) != 3 {
 		t.Fatalf("tracks: %d", len(sheet.Tracks))
 	}
-	if sheet.Tracks[1].Title != "我也會愛上別人" || sheet.Tracks[1].Index01 != 5.5*60-30+30 {
-		// 00:05:30 => 5*60+30 = 330s
-		if sheet.Tracks[1].Index01 != 330 {
-			t.Fatalf("track2 index: %v", sheet.Tracks[1].Index01)
-		}
+	// INDEX 01 00:05:30 => mm:ss:ff = 5 秒 + 30/75 帧 = 5.4 秒
+	if sheet.Tracks[1].Index01 != 5.4 {
+		t.Fatalf("track2 index: %v", sheet.Tracks[1].Index01)
 	}
 	if sheet.Tracks[0].ISRC != "TWAAA9500012" {
 		t.Fatalf("isrc: %q", sheet.Tracks[0].ISRC)

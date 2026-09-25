@@ -238,6 +238,14 @@ func ApplyUpdates(data []byte, trackNumber int, updates map[string][]string) (ne
 	if err != nil {
 		return nil, nil, err
 	}
+	// 与解析保持同一编码视角：GBK 文件先解码，编辑后再编码回去
+	if sheet.Encoding != "utf8" {
+		decoded, decErr := simplifiedchinese.GBK.NewDecoder().Bytes(data)
+		if decErr != nil {
+			return nil, nil, decErr
+		}
+		data = decoded
+	}
 	text := strings.TrimPrefix(string(data), "\uFEFF")
 	for _, key := range sortedKeys(updates) {
 		if !cueWritableFields[key] {
