@@ -467,7 +467,7 @@ func (s *Scanner) discoverDepth(ctx context.Context, maxDepth int, targets ...st
 			if strings.HasPrefix(entry.Name(), ".") {
 				return nil
 			}
-			if isSupportedAudio(path) || strings.EqualFold(filepath.Ext(path), ".cue") {
+			if isSupportedAudio(path) {
 				paths = append(paths, path)
 				fingerprints[path] = fileFingerprint(path)
 			}
@@ -947,55 +947,41 @@ type cueBind struct {
 	cueRel string
 }
 
-// bindCueSheets 解析发现到的 .cue 文件，并按 FILE 行/同名规则配对整轨音频。
-// 配对成功返回 音频绝对路径 -> 绑定；找不到配对音频的 cue 记入 warnings，
-// 对应音频将按普通单文件索引（与旧行为一致）。
+// bindCueSheets 为发现到的整轨音频反向探测同名 .cue（不要求 cue 出现在
+// 发现列表里——watcher 触发的局部扫描可能只带音频目标）。配对成功返回
+// 音频绝对路径 -> 绑定；解析失败的 cue 记入 warnings，对应音频退回普通
+// 单文件索引（与旧行为一致）。
 func (s *Scanner) bindCueSheets(paths []string) (map[string]cueBind, []string) {
 	binds := make(map[string]cueBind)
 	warnings := make([]string, 0)
-	audioSet := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		audioSet[path] = true
-	}
-	for _, path := range paths {
-		if !strings.EqualFold(filepath.Ext(path), ".cue") {
+	for _, audioPath := range paths {
+		if !isSupportedAudio(audioPath) {
 			continue
 		}
-		data, err := os.ReadFile(path)
+		ext := filepath.Ext(audioPath)
+		if strings.EqualFold(ext, ".wav") == false && strings.EqualFold(ext, ".flac") == false {
+			continue
+		}
+		cueAbs := strings.TrimSuffix(audioPath, ext) + ".cue"
+		cueInfo, err := os.Stat(cueAbs)
+		if err != nil || cueInfo.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(cueAbs)
 		if err != nil {
 			warnings = append(warnings, "读取 cue 失败: "+err.Error())
 			continue
 		}
 		sheet, err := cue.ParseBytes(data)
 		if err != nil {
-			warnings = append(warnings, "解析 cue 失败: "+filepath.Base(path)+" "+err.Error())
+			warnings = append(warnings, "解析 cue 失败: "+filepath.Base(cueAbs)+" "+err.Error())
 			continue
 		}
-		dir := filepath.Dir(path)
-		candidates := make([]string, 0, 3)
-		if sheet.File != "" {
-			candidates = append(candidates, filepath.Join(dir, filepath.FromSlash(sheet.File)))
-		}
-		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		for _, ext := range []string{".wav", ".flac"} {
-			candidates = append(candidates, filepath.Join(dir, base+ext))
-		}
-		paired := ""
-		for _, candidate := range candidates {
-			if audioSet[candidate] {
-				paired = candidate
-				break
-			}
-		}
-		if paired == "" {
-			warnings = append(warnings, "cue 未配对到整轨音频（跳过虚拟轨道）: "+filepath.Base(path))
-			continue
-		}
-		cueRel, err := filepath.Rel(s.opts.Root, path)
+		cueRel, err := filepath.Rel(s.opts.Root, cueAbs)
 		if err != nil {
 			continue
 		}
-		binds[paired] = cueBind{sheet: sheet, cueAbs: path, cueRel: filepath.ToSlash(cueRel)}
+		binds[audioPath] = cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: filepath.ToSlash(cueRel)}
 	}
 	return binds, warnings
 }

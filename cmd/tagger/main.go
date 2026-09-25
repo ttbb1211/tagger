@@ -256,7 +256,8 @@ func main() {
 			return scanErr
 		}
 		report := libraryService.LastReport()
-		total := report.Discovered
+		// total 按结果曲目数计（cue 整轨会一文件展开多轨，与 Discovered 文件数不同）
+		total := report.Parsed + report.Unchanged + report.Failed
 		if total == 0 {
 			total = before
 		}
