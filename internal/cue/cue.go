@@ -335,7 +335,7 @@ func setRem(text, key, value string) string {
 	prefix := "REM " + key + " "
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToUpper(trimmed), "REM "+key+" ") {
+		if strings.HasPrefix(strings.ToUpper(trimmed), prefix) {
 			lines[i] = "REM " + key + " " + value
 			return strings.Join(lines, "\n")
 		}
@@ -372,7 +372,7 @@ func trackBlockBounds(lines []string, number int) (start, end int) {
 	if startIdx < 0 {
 		return 0, len(lines)
 	}
-	end := len(lines)
+	end = len(lines)
 	for i := startIdx + 1; i < len(lines); i++ {
 		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(lines[i])), "TRACK ") ||
 			strings.HasPrefix(strings.ToUpper(strings.TrimSpace(lines[i])), "FILE ") {
