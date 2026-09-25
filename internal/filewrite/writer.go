@@ -1351,3 +1351,18 @@ func writeCueAtomic(path string, data []byte) error {
 	}
 	return nil
 }
+
+// sidecarPathFor 解析歌词 sidecar 的实际路径（普通文件同名 .lrc；
+// cue 虚拟轨道为 父音频.NNN.lrc）。
+func (w *Writer) sidecarPathFor(ref library.FileRef) (string, error) {
+	if domain.IsCueVirtualPath(ref.RelativePath) {
+		parentRel, number, err := domain.ParseCueVirtualPath(ref.RelativePath)
+		if err != nil {
+			return "", err
+		}
+		sr := ref
+		sr.RelativePath = domain.CueSidecarPath(parentRel, number)
+		return w.containedPath(sr)
+	}
+	return w.containedSidecarPath(ref)
+}
