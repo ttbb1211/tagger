@@ -1,4 +1,4 @@
-name: Build Linux x86_64
+name: Build Linux (amd64 & arm64)
 
 on:
   push:
@@ -14,15 +14,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  build_linux_amd64:
-    name: Build linux/amd64
+  build_linux:
+    name: Build linux/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    outputs:
-      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
-      archive_name: ${{ steps.metadata.outputs.archive_name }}
-      checksum_name: ${{ steps.metadata.outputs.checksum_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -47,6 +47,7 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          MATRIX_GOARCH: ${{ matrix.goarch }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
             version="${RELEASE_TAG#v}"
@@ -60,9 +61,9 @@ jobs:
           fi
 
           asset_version="${version//\//-}"
-          archive_name="tagger_${asset_version}_linux_amd64.tar.gz"
+          archive_name="tagger_${asset_version}_linux_${MATRIX_GOARCH}.tar.gz"
           checksum_name="${archive_name}.sha256"
-          artifact_name="tagger-linux-amd64-${GITHUB_SHA}"
+          artifact_name="tagger-linux-${MATRIX_GOARCH}-${GITHUB_SHA}"
 
           {
             echo "version=$version"
@@ -75,7 +76,7 @@ jobs:
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
           GOOS: linux
-          GOARCH: amd64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
         run: make build VERSION="$VERSION" BINARY=tagger
 
@@ -84,12 +85,16 @@ jobs:
           make test
           make lint
 
-      - name: Verify Linux x86_64 executable
+      - name: Verify Linux executable architecture
         shell: bash
         run: |
           test -x dist/tagger
           file dist/tagger
-          file dist/tagger | grep -q 'ELF 64-bit.*x86-64'
+          if [[ "${{ matrix.goarch }}" == "amd64" ]]; then
+            file dist/tagger | grep -q 'ELF 64-bit.*x86-64'
+          else
+            file dist/tagger | grep -q 'ELF 64-bit.*aarch64'
+          fi
 
       - name: Package binary and checksum
         shell: bash
@@ -117,34 +122,34 @@ jobs:
     name: Attach assets to GitHub Release
     if: ${{ github.event_name == 'release' }}
     needs:
-      - build_linux_amd64
+      - build_linux
     runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: write
     steps:
-      - name: Download verified build artifact
+      - name: Download build artifacts
         uses: actions/download-artifact@v7
         with:
-          name: ${{ needs.build_linux_amd64.outputs.artifact_name }}
+          pattern: tagger-linux-*-${{ github.sha }}
+          merge-multiple: true
           path: release
 
-      - name: Verify downloaded checksum
+      - name: Verify downloaded checksums
         working-directory: release
-        env:
-          CHECKSUM_NAME: ${{ needs.build_linux_amd64.outputs.checksum_name }}
-        run: sha256sum --check "$CHECKSUM_NAME"
+        shell: bash
+        run: |
+          ls -la
+          sha256sum --check *.sha256
 
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          ARCHIVE_NAME: ${{ needs.build_linux_amd64.outputs.archive_name }}
-          CHECKSUM_NAME: ${{ needs.build_linux_amd64.outputs.checksum_name }}
         run: |
           gh release upload "$RELEASE_TAG" \
-            "release/$ARCHIVE_NAME#Linux x86_64 (amd64)" \
-            "release/$CHECKSUM_NAME#SHA-256 checksum" \
+            release/*.tar.gz \
+            release/*.sha256 \
             --clobber \
             --repo "$GH_REPO"
