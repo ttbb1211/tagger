@@ -62,7 +62,7 @@ begin
     '选择音乐库根目录，然后点击「下一步」。',
     False, '');
   MusicDirPage.Add('');
-  MusicDirPage.Values[0] := GetEnvironmentVariable('USERPROFILE') + '\Music';
+  MusicDirPage.Values[0] := GetEnv('USERPROFILE') + '\Music';
 end;
 
 function GetMusicDir(Param: string): string;

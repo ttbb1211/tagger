@@ -118,11 +118,21 @@ jobs:
         env:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          choco install innosetup -y --no-progress
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
-          & $iscc "/DAPP_VERSION=$env:VERSION" packaging/windows/tagger.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ErrorActionPreference = 'Stop'
+          # 直接从官方站点安装固定版本，避免 choco 包装层的变量
+          $installer = "$env:RUNNER_TEMP\innosetup-6.3.3.exe"
+          Invoke-WebRequest -Uri 'https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe' -OutFile $installer
+          Start-Process -FilePath $installer -Args '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found at $iscc" }
+          $out = & $iscc "/DAPP_VERSION=$env:VERSION" packaging/windows/tagger.iss 2>&1
+          $out | ForEach-Object { Write-Host $_ }
+          if ($LASTEXITCODE -ne 0) {
+            # 失败详情写入公共 annotation，便于无凭据排障
+            $tail = ($out | Select-Object -Last 10) -join ' | '
+            Write-Host "::error::ISCC failed: $tail"
+            exit 1
+          }
 
       - name: Verify installer output
         shell: bash
