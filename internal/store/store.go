@@ -51,7 +51,14 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	values.Add("_pragma", "busy_timeout(5000)")
 	values.Add("_pragma", "journal_mode(WAL)")
 	values.Add("_pragma", "synchronous(NORMAL)")
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path), RawQuery: values.Encode()}).String()
+	// Windows absolute paths (C:/...) must become absolute URI paths
+	// (/C:/...) so the DSN reads file:///C:/...; otherwise "C:" is
+	// parsed as the URI authority and the store fails to initialize.
+	dbPath := filepath.ToSlash(path)
+	if !strings.HasPrefix(dbPath, "/") {
+		dbPath = "/" + dbPath
+	}
+	dsn := (&url.URL{Scheme: "file", Path: dbPath, RawQuery: values.Encode()}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
