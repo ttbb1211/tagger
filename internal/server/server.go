@@ -2299,7 +2299,7 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 		if ps < headerLen {
 			ps = headerLen
 		}
-		pcmOffset := layout.dataStart + (ps - headerLen)
+		pcmOffset := segDataStart + (ps - headerLen)
 		count := end - ps + 1
 		parts = append(parts, io.NewSectionReader(file, pcmOffset, count))
 	}
