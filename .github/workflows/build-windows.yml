@@ -1,0 +1,183 @@
+name: Build Windows x86_64
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.dockerignore'
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build_windows_amd64:
+    name: Build windows/amd64
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+      zip_name: ${{ steps.metadata.outputs.zip_name }}
+      installer_name: ${{ steps.metadata.outputs.installer_name }}
+      checksum_name: ${{ steps.metadata.outputs.checksum_name }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Resolve build metadata
+        id: metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            version="${RELEASE_TAG#v}"
+          else
+            version="dev-${GITHUB_SHA:0:7}"
+          fi
+
+          if [[ -z "$version" ]]; then
+            echo "::error::Could not determine the build version"
+            exit 1
+          fi
+
+          artifact_name="tagger-windows-amd64-${GITHUB_SHA}"
+
+          {
+            echo "version=$version"
+            echo "zip_name=tagger_${version}_windows_amd64.zip"
+            echo "installer_name=tagger_setup_${version}_windows_amd64.exe"
+            echo "checksum_name=tagger_${version}_windows_amd64.zip.sha256"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build embedded frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          cd ..
+          rm -rf web/dist
+          mkdir -p web/dist
+          cp -R frontend/dist/. web/dist/
+
+      - name: Build Windows binary
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -ldflags "-X github.com/ericwyn/tagger/internal/version.Version=$VERSION" \
+            -o dist/tagger.exe ./cmd/tagger
+
+      - name: Verify Windows executable
+        shell: bash
+        run: |
+          test -f dist/tagger.exe
+          file dist/tagger.exe
+          file dist/tagger.exe | grep -q 'PE32+.*x86-64'
+
+      - name: Package portable zip and checksum
+        shell: bash
+        env:
+          ZIP_NAME: ${{ steps.metadata.outputs.zip_name }}
+          CHECKSUM_NAME: ${{ steps.metadata.outputs.checksum_name }}
+        run: |
+          mkdir -p release
+          cp packaging/windows/使用说明.txt dist/
+          powershell -NoProfile -Command "Compress-Archive -Path 'dist/tagger.exe','dist/使用说明.txt' -DestinationPath 'release/${ZIP_NAME}' -Force"
+          cd release
+          sha256sum "$ZIP_NAME" > "$CHECKSUM_NAME"
+
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAPP_VERSION=$env:VERSION" packaging/windows/tagger.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify installer output
+        shell: bash
+        env:
+          INSTALLER_NAME: ${{ steps.metadata.outputs.installer_name }}
+        run: |
+          test -f "release/${INSTALLER_NAME}"
+          ls -la release/
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.metadata.outputs.artifact_name }}
+          path: |
+            release/${{ steps.metadata.outputs.zip_name }}
+            release/${{ steps.metadata.outputs.installer_name }}
+            release/${{ steps.metadata.outputs.checksum_name }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish_release:
+    name: Attach assets to GitHub Release
+    if: ${{ github.event_name == 'release' }}
+    needs:
+      - build_windows_amd64
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download verified build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ needs.build_windows_amd64.outputs.artifact_name }}
+          path: release
+
+      - name: Verify downloaded checksum
+        working-directory: release
+        env:
+          CHECKSUM_NAME: ${{ needs.build_windows_amd64.outputs.checksum_name }}
+        run: sha256sum --check "$CHECKSUM_NAME"
+
+      - name: Upload assets to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ZIP_NAME: ${{ needs.build_windows_amd64.outputs.zip_name }}
+          INSTALLER_NAME: ${{ needs.build_windows_amd64.outputs.installer_name }}
+          CHECKSUM_NAME: ${{ needs.build_windows_amd64.outputs.checksum_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "release/$ZIP_NAME#Windows x86_64 portable (amd64)" \
+            "release/$INSTALLER_NAME#Windows x86_64 installer (amd64)" \
+            "release/$CHECKSUM_NAME#SHA-256 checksum (portable zip)" \
+            --clobber \
+            --repo "$GH_REPO"
