@@ -165,12 +165,12 @@ Tagger 把“查询”和“写入”明确分开。一次批量补全不会直�
 
 | 平台 | 部署方式 |
 | --- | --- |
-| Linux amd64 | 预编译二进制 / Docker 镜像 |
-| Linux arm64 | Docker 镜像 |
+| Windows 10/11（x64） | Releases 页**安装版 / 便携版**（v1.2.0 起，fork 提供） |
+| Linux amd64 | Releases 页预编译二进制 / Docker 镜像 |
+| Linux arm64（甲骨文 A1、树莓派等） | Releases 页预编译二进制（v1.2.0 起）/ Docker 镜像 |
 | 群晖 / 威联通 / Unraid / TrueNAS | Docker 镜像 |
-| 树莓派 / ARM 小主机 | Docker 镜像 |
 
-以上平台均使用 `ghcr.io/ericwyn/tagger` 多架构镜像。其他平台可从源码交叉编译：项目以 `CGO_ENABLED=0` 构建，TagLib 以 WebAssembly 形式嵌入，交叉编译不需要 C 工具链。
+二进制从 [Releases](https://github.com/ttbb1211/tagger/releases) 页下载（amd64 与 arm64 双架构）。Docker 镜像两个来源均可用、均为 amd64+arm64 双架构：本 fork 的 `ghcr.io/ttbb1211/tagger`（跟随 Releases 发版）与上游的 `ghcr.io/ericwyn/tagger`。其他平台可从源码交叉编译：项目以 `CGO_ENABLED=0` 构建，TagLib 以 WebAssembly 形式嵌入，交叉编译不需要 C 工具链。
 
 ### 构建要求
 
