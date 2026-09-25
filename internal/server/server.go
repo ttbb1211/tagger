@@ -2260,7 +2260,9 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 	headerLen := int64(len(header))
 	virtualSize := headerLen + segDataLen
 
-	etag := `"` + track.Revision + `"`
+	// ETag 追加 -cue 后缀：cue 切片与整文件是不同表示，同时让旧版
+	// （无合成头）缓存条目自然失效
+	etag := `"` + track.Revision + `-cue"`
 	c.Header("ETag", etag)
 	c.Header("Accept-Ranges", "bytes")
 	c.SetContentType("audio/wav")
