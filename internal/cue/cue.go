@@ -102,9 +102,17 @@ func ParseBytes(data []byte) (*Sheet, error) {
 				}
 			}
 		case strings.HasPrefix(upper, "FILE "):
-			name, _, _ := strings.Cut(strings.TrimSpace(line[len("FILE "):]), " ")
+			rest := strings.TrimSpace(line[len("FILE "):])
+			name := rest
+			if strings.HasPrefix(rest, "\"") {
+				if endQuote := strings.LastIndex(rest, "\""); endQuote > 0 {
+					name = rest[1:endQuote]
+				}
+			} else if sp := strings.IndexByte(rest, ' '); sp >= 0 {
+				name = rest[:sp]
+			}
 			if sheet.File == "" {
-				sheet.File = unquote(name)
+				sheet.File = name
 			}
 		case strings.HasPrefix(upper, "TRACK "):
 			fields := strings.Fields(strings.TrimSpace(line[len("TRACK "):]))
