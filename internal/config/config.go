@@ -21,8 +21,6 @@ type Config struct {
 	WatchMode         domain.WatchMode
 	WatcherWait       time.Duration
 	ReconcileInterval time.Duration
-	OpenBrowser       bool
-	HideConsole       bool
 	TestProviders     bool
 	TestTitle         string
 	TestArtists       string
@@ -70,8 +68,6 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		WatchMode:         domain.WatchMode(valueOr(getenv("TAGGER_WATCH_MODE"), string(domain.WatchModeAuto))),
 		WatcherWait:       watcherWait,
 		ReconcileInterval: reconcileInterval,
-		OpenBrowser:       !strings.EqualFold(strings.TrimSpace(getenv("TAGGER_OPEN_BROWSER")), "false"),
-		HideConsole:       !strings.EqualFold(strings.TrimSpace(getenv("TAGGER_HIDE_CONSOLE")), "false"),
 		TestTitle:         "最佳歌手",
 		TestArtists:       "许嵩",
 		TestLimit:         1,
@@ -87,8 +83,6 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.Var((*watchModeValue)(&cfg.WatchMode), "watch-mode", "filesystem update mode: auto, events, or poll")
 	flags.DurationVar(&cfg.WatcherWait, "watcher-wait", cfg.WatcherWait, "debounce delay for filesystem changes")
 	flags.DurationVar(&cfg.ReconcileInterval, "reconcile-interval", cfg.ReconcileInterval, "optional periodic incremental reconciliation (0 disables)")
-	flags.BoolVar(&cfg.OpenBrowser, "open-browser", cfg.OpenBrowser, "open the web UI in the default browser once the server is up (Windows)")
-	flags.BoolVar(&cfg.HideConsole, "hide-console", cfg.HideConsole, "hide the console window once the server is up (Windows; keep it with -hide-console=false when debugging)")
 	flags.BoolVar(&cfg.TestProviders, "test-providers", false, "test every built-in metadata provider and exit")
 	flags.StringVar(&cfg.TestTitle, "test-title", cfg.TestTitle, "provider test song title")
 	flags.StringVar(&cfg.TestArtists, "test-artists", cfg.TestArtists, "comma-separated provider test artists")

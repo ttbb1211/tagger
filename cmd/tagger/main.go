@@ -7,10 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -598,56 +596,7 @@ func main() {
 		"tracks", libraryService.Library().TrackCount,
 		"version", version.Version,
 	)
-	if (cfg.OpenBrowser || cfg.HideConsole) && runtime.GOOS == "windows" {
-		go func() {
-			// Wait until the listener actually accepts connections so a
-			// failed startup keeps its console visible for the error.
-			if !waitForListener(cfg.Listen, 10*time.Second) {
-				return
-			}
-			if cfg.HideConsole {
-				hideConsoleWindow()
-			}
-			if cfg.OpenBrowser {
-				openWebUI(webUIURL(cfg.Listen))
-			}
-		}()
-	}
 	srv.Spin()
-}
-
-// waitForListener polls until the server accepts TCP connections.
-func waitForListener(listen string, timeout time.Duration) bool {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return false
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	address := net.JoinHostPort(host, port)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, dialErr := net.DialTimeout("tcp", address, 500*time.Millisecond)
-		if dialErr == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
-}
-
-// webUIURL normalizes the listen address into the URL to open in a browser.
-func webUIURL(listen string) string {
-	host, port, err := net.SplitHostPort(listen)
-	if err != nil {
-		return ""
-	}
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
-	return fmt.Sprintf("http://%s", net.JoinHostPort(host, port))
 }
 
 func formatMatchProgress(processed, total, providerQueries, candidateCount, failed int) string {
