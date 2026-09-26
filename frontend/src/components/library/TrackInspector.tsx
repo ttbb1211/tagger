@@ -189,10 +189,9 @@ export function TrackInspector({
   const original = useMemo(() => track ? toPatch(track) : null, [track]);
   const dirty = Boolean(draft && original && !patchEqual(draft, original));
 
-  // 整轨 CUE 虚拟轨道没有独立音频文件，歌词无法内嵌，只能写 .lrc sidecar ——
-  // 此时强制勾选导出，避免歌词只留在曲库索引里、完整重扫即丢。
+  // 整轨 CUE 虚拟轨道没有独立音频文件、歌词无法内嵌，只能写 .lrc sidecar；
+  // 但「要不要歌词」由用户决定（有些整轨本来就不需要），不强制勾选。
   const cueVirtual = Boolean(track?.cuePath);
-  const exportLrcChecked = cueVirtual || exportLrc;
 
   const changedFields = useMemo<Array<[keyof TrackPatch, string]>>(() => {
     if (!draft || !original) return [];
@@ -680,14 +679,13 @@ export function TrackInspector({
               <label>
                 <input
                   type="checkbox"
-                  checked={exportLrcChecked}
-                  disabled={cueVirtual}
+                  checked={exportLrc}
                   onChange={(event) => setExportLrc(event.target.checked)}
                 />
-                {cueVirtual ? '导出 .lrc 歌词文件（必选）' : '同时导出 .lrc 歌词文件'}
+                {cueVirtual ? '导出 .lrc 歌词文件' : '同时导出 .lrc 歌词文件'}
                 <small>
                   {cueVirtual
-                    ? '整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc，这是唯一能持久化的方式'
+                    ? '可选。整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc；不勾选则歌词只保留在曲库索引中，完整重扫会丢失'
                     : '与音频同目录同名，如 歌曲.lrc，可单独编辑 / 拷贝给其他播放器'}
                 </small>
               </label>
@@ -786,7 +784,7 @@ export function TrackInspector({
                 className="primary-button"
                 disabled={saving}
                 onClick={async () => {
-                  await onSave(draft, {writeTag, exportLrc: exportLrcChecked});
+                  await onSave(draft, {writeTag, exportLrc});
                   setShowPreview(false);
                 }}
               >

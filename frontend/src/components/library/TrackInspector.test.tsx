@@ -129,7 +129,7 @@ describe('TrackInspector', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:01.00] embedded only'}), {writeTag: true, exportLrc: true});
   });
 
-  it('forces .lrc export for cue virtual tracks, where lyrics cannot be embedded', async () => {
+  it('leaves .lrc export optional for cue virtual tracks, where lyrics cannot be embedded', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
     const cueTrack: Track = {
@@ -153,9 +153,43 @@ describe('TrackInspector', () => {
 
     await user.click(screen.getByRole('tab', {name: '歌词'}));
     expect(screen.getByRole('checkbox', {name: /写入 cue 标签/})).toBeChecked();
-    const lrc = screen.getByRole('checkbox', {name: /导出 \.lrc 歌词文件（必选）/});
+    const lrc = screen.getByRole('checkbox', {name: /导出 \.lrc 歌词文件/});
+    expect(lrc).not.toBeChecked();
+    expect(lrc).not.toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(/在这里输入歌词/), {target: {value: '[00:02.00] cue lyrics'}});
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await user.click(screen.getByRole('button', {name: '确认写入'}));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: true, exportLrc: false});
+  });
+
+  it('exports .lrc for cue virtual tracks when the user opts in', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const cueTrack: Track = {
+      ...seedTracks[0],
+      cuePath: 'Album/整轨.flac',
+      startOffsetSeconds: 120,
+      endOffsetSeconds: 300,
+      durationSeconds: 180,
+    };
+    render(
+      <TrackInspector
+        track={cueTrack}
+        saving={false}
+        mobileOpen
+        onCloseMobile={() => {}}
+        onSearch={() => {}}
+        onSave={onSave}
+        onArtworkChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', {name: '歌词'}));
+    const lrc = screen.getByRole('checkbox', {name: /导出 \.lrc 歌词文件/});
+    await user.click(lrc);
     expect(lrc).toBeChecked();
-    expect(lrc).toBeDisabled();
 
     fireEvent.change(screen.getByPlaceholderText(/在这里输入歌词/), {target: {value: '[00:02.00] cue lyrics'}});
     await user.click(screen.getByRole('button', {name: '保存修改'}));

@@ -807,7 +807,11 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 	    : lrcState === 'written' ? '歌词已导出为 .lrc 文件'
 	      : lrcState === 'deleted' ? '歌词为空，已删除 .lrc 文件'
 	        : '歌词为空，未生成 .lrc 文件';
-	  const summary = writeTag && exportLrc && lrcState !== 'skipped' ? `标签已安全写入，${lrcNote}` : lrcNote;
+	  // 整轨虚拟轨道不勾 .lrc：歌词只进曲库索引，用户有权这么选，但后果要说清
+	  const cueLyricsUnpersisted = Boolean(activeTrack.cuePath) && !exportLrc && (patch.lyrics ?? '').trim() !== '';
+	  const summary = cueLyricsUnpersisted
+	    ? '整轨虚拟轨道的歌词未导出 .lrc，只保留在曲库索引中（完整重扫会丢失）'
+	    : writeTag && exportLrc && lrcState !== 'skipped' ? `标签已安全写入，${lrcNote}` : lrcNote;
 	  onNotice(writeTag ? tagWriteNotice(updated, summary) : summary);
 	  return updated;
 	} catch (error) {
