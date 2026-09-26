@@ -630,7 +630,7 @@ func main() {
 			os.Exit(0)
 		}
 		url := webUIURL(cfg.Listen)
-		if !runWebViewWindow(url, cfg.DataDir) {
+		if !runWebViewWindow(url, cfg.DataDir, version.Version) {
 			logger.Warn("WebView2 运行时不可用，回退为打开默认浏览器")
 			openWebUI(url)
 		}
@@ -638,7 +638,7 @@ func main() {
 			// 窗口已关闭 → 托盘常驻：等「打开主窗口」重开界面，或「完全退出」
 			select {
 			case <-trayReopen:
-				if !runWebViewWindow(url, cfg.DataDir) {
+				if !runWebViewWindow(url, cfg.DataDir, version.Version) {
 					openWebUI(url)
 				}
 			case <-trayQuit:

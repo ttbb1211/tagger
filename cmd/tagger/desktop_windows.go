@@ -46,7 +46,7 @@ var (
 
 // runWebViewWindow 在原生 WebView2 窗口中承载界面并阻塞至窗口关闭。
 // 返回 false 表示 WebView2 运行时不可用，调用方应回退浏览器方案。
-func runWebViewWindow(url, dataDir string) (ok bool) {
+func runWebViewWindow(url, dataDir, appVersion string) (ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			ok = false
@@ -56,7 +56,7 @@ func runWebViewWindow(url, dataDir string) (ok bool) {
 		DataPath:  filepath.Join(dataDir, "webview"),
 		AutoFocus: true,
 		WindowOptions: webview2.WindowOptions{
-			Title:  "Tagger",
+			Title:  "Tagger " + appVersion,
 			Width:  1280,
 			Height: 820,
 			Center: true,
@@ -66,7 +66,7 @@ func runWebViewWindow(url, dataDir string) (ok bool) {
 	if w == nil {
 		return false
 	}
-	w.SetTitle("Tagger")
+	w.SetTitle("Tagger " + appVersion)
 	w.Navigate(url)
 	defer w.Destroy()
 	w.Run()

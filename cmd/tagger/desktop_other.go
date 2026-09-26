@@ -8,7 +8,7 @@ func openWebUI(url string)        {}
 func ensureDataDirExists(string)  {}
 func startTray()                  {}
 
-func runWebViewWindow(url, dataDir string) bool { return false }
+func runWebViewWindow(url, dataDir, appVersion string) bool { return false }
 
 var (
 	trayReopen = make(chan struct{}, 1)
