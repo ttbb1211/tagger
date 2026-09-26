@@ -79,6 +79,12 @@ export interface Track {
   writable: boolean;
   revision: string;
   modifiedAt: string;
+  // 整轨 CUE 虚拟轨道：cuePath 非空表示该曲目是 cuePath 所指整轨文件的
+  // [startOffsetSeconds, endOffsetSeconds) 区间。WAV 整轨由后端切段，
+  // 其余格式（如 FLAC）由播放器按偏移量 seek。
+  cuePath?: string;
+  startOffsetSeconds?: number;
+  endOffsetSeconds?: number;
   parseError?: string;
   missing?: boolean;
   missingSince?: string;
