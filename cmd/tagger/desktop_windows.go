@@ -49,6 +49,7 @@ func runWebViewWindow(url, dataDir string) (ok bool) {
 			Width:  1280,
 			Height: 820,
 			Center: true,
+			IconId: 1, // rsrc_windows_amd64.syso 内嵌的品牌图标
 		},
 	})
 	if w == nil {
