@@ -232,7 +232,9 @@ export async function writeLyricsSidecar(trackId: string, content: string): Prom
   if (index < 0) throw new Error('track_not_found');
   const before = tracks[index].lyricsSidecar;
   const after = sidecarInfo(content);
-  tracks[index] = {...tracks[index], lyricsSidecar: after, modifiedAt: '刚刚'};
+  // 对齐真实后端：sidecar 写入后会重新索引，内嵌歌词优先、为空时才取 sidecar
+  const lyrics = tracks[index].lyrics?.trim() ? tracks[index].lyrics : content;
+  tracks[index] = {...tracks[index], lyrics, lyricsSidecar: after, modifiedAt: '刚刚'};
   return {
     track: structuredClone(tracks[index]),
     sidecar: {

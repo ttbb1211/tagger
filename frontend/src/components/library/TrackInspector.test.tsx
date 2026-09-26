@@ -44,7 +44,7 @@ describe('TrackInspector', () => {
     await user.click(screen.getByRole('button', {name: '确认写入'}));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       title: 'brave heart', artists: ['宮崎歩'], albumArtists: ['宮崎歩'],
-    }), {writeTag: true});
+    }), {writeTag: true, exportLrc: false});
   });
 
   it('keeps the historical snapshot notice compact and dismissible', async () => {
@@ -99,10 +99,10 @@ describe('TrackInspector', () => {
     expect(screen.getByText('再回首（修订）')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', {name: '确认写入'}));
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({title: '再回首（修订）'}), {writeTag: true});
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({title: '再回首（修订）'}), {writeTag: true, exportLrc: false});
   });
 
-  it('saves edited lyrics to the embedded audio tag without exposing sidecar writing', async () => {
+  it('saves edited lyrics to the embedded audio tag and can additionally export a .lrc', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(
@@ -120,11 +120,48 @@ describe('TrackInspector', () => {
     await user.click(screen.getByRole('tab', {name: '歌词'}));
     const lyrics = screen.getByPlaceholderText(/在这里输入歌词/);
     fireEvent.change(lyrics, {target: {value: '[00:01.00] embedded only'}});
-    expect(screen.queryByRole('checkbox', {name: /同时保存/})).not.toBeInTheDocument();
+    const lrc = screen.getByRole('checkbox', {name: /同时导出 \.lrc 歌词文件/});
+    expect(lrc).not.toBeChecked();
+    await user.click(lrc);
     await user.click(screen.getByRole('button', {name: '保存修改'}));
     await user.click(screen.getByRole('button', {name: '确认写入'}));
 
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:01.00] embedded only'}), {writeTag: true});
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:01.00] embedded only'}), {writeTag: true, exportLrc: true});
+  });
+
+  it('forces .lrc export for cue virtual tracks, where lyrics cannot be embedded', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const cueTrack: Track = {
+      ...seedTracks[0],
+      cuePath: 'Album/整轨.flac',
+      startOffsetSeconds: 120,
+      endOffsetSeconds: 300,
+      durationSeconds: 180,
+    };
+    render(
+      <TrackInspector
+        track={cueTrack}
+        saving={false}
+        mobileOpen
+        onCloseMobile={() => {}}
+        onSearch={() => {}}
+        onSave={onSave}
+        onArtworkChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', {name: '歌词'}));
+    expect(screen.getByRole('checkbox', {name: /写入 cue 标签/})).toBeChecked();
+    const lrc = screen.getByRole('checkbox', {name: /导出 \.lrc 歌词文件（必选）/});
+    expect(lrc).toBeChecked();
+    expect(lrc).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText(/在这里输入歌词/), {target: {value: '[00:02.00] cue lyrics'}});
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await user.click(screen.getByRole('button', {name: '确认写入'}));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: true, exportLrc: true});
   });
 
   it('edits extended embedded fields without changing unknown raw tags', async () => {
@@ -151,7 +188,7 @@ describe('TrackInspector', () => {
 
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       comment: 'liner note', bpm: 128, musicbrainzTrackId: 'track-mbid',
-    }), {writeTag: true});
+    }), {writeTag: true, exportLrc: false});
   });
 
   it('uploads artwork and requires a second click before deletion', async () => {

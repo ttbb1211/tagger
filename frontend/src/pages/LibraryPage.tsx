@@ -27,6 +27,7 @@ import {
   applyCandidateArtwork,
   createBatchEditJob,
 	  createOrganizeJob,
+	  deleteLyricsSidecar,
 	  getSystem,
 	  listLibraries,
 	  listTrackPage,
@@ -40,6 +41,7 @@ import {
   updateArtwork,
 	updateTrack,
 	waitForJob,
+	writeLyricsSidecar,
 } from '@/api';
 import {defaultBatchTrackLimit, type BatchArtworkInput, type CandidateSearchQuery, type LibrarySummary, type MatchCandidate, type OrganizeMode, type RestoreDraftRequest, type Track, type TrackFormat, type TrackPatch, type TrackQuery, type TrackSort, type UpdateProvenance} from '@/types';
 import type {StateSnapshot} from 'react-virtuoso';
@@ -47,6 +49,7 @@ import {clearLibraryViewSnapshot, getLibraryViewSnapshot, setLibraryViewSnapshot
 
 interface LyricsSaveOptions {
   writeTag?: boolean;
+  exportLrc?: boolean;
 }
 
 interface LibraryPageProps {
@@ -773,17 +776,39 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		  return undefined;
 		}
     const writeTag = options.writeTag ?? true;
-    if (!writeTag) {
-      onNotice('未选择“写入音频标签”，文件未修改');
+    const exportLrc = options.exportLrc ?? false;
+    if (!writeTag && !exportLrc) {
+      onNotice('未选择任何写入方式，文件未修改');
       return activeTrack;
     }
     setSaving(true);
     let updated = activeTrack;
 	  try {
-	  updated = await updateTrack(activeTrack.id, patch, provenance);
-	  updateTrackState(updated);
-	  if (restoreDraft?.trackId === updated.id) onRestoreDraftConsumed?.();
-	  onNotice(tagWriteNotice(updated, notice));
+	  if (writeTag) {
+	    updated = await updateTrack(activeTrack.id, patch, provenance);
+	    updateTrackState(updated);
+	    if (restoreDraft?.trackId === updated.id) onRestoreDraftConsumed?.();
+	  }
+	  let lrcState: 'written' | 'deleted' | 'skipped' = 'skipped';
+	  if (exportLrc) {
+	    // 整轨 CUE 虚拟轨道的歌词只能靠 .lrc 持久化；普通曲目是「内嵌之外再存一份」
+	    const lyrics = patch.lyrics ?? '';
+	    if (lyrics.trim() !== '') {
+	      updated = await writeLyricsSidecar(updated.id, lyrics);
+	      updateTrackState(updated);
+	      lrcState = 'written';
+	    } else if (updated.lyricsSidecar?.exists) {
+	      updated = await deleteLyricsSidecar(updated.id);
+	      updateTrackState(updated);
+	      lrcState = 'deleted';
+	    }
+	  }
+	  const lrcNote = !exportLrc ? notice
+	    : lrcState === 'written' ? '歌词已导出为 .lrc 文件'
+	      : lrcState === 'deleted' ? '歌词为空，已删除 .lrc 文件'
+	        : '歌词为空，未生成 .lrc 文件';
+	  const summary = writeTag && exportLrc && lrcState !== 'skipped' ? `标签已安全写入，${lrcNote}` : lrcNote;
+	  onNotice(writeTag ? tagWriteNotice(updated, summary) : summary);
 	  return updated;
 	} catch (error) {
 	  onNotice(error instanceof Error ? error.message : '标签保存失败');

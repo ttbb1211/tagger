@@ -47,6 +47,8 @@ interface TrackInspectorProps {
 
 export interface TrackSaveOptions {
   writeTag: boolean;
+  /** 同时把歌词写为 .lrc sidecar：普通曲目可选，整轨 CUE 虚拟轨道必选（唯一能持久化的方式） */
+  exportLrc: boolean;
 }
 
 const tabs: Array<{id: InspectorTab; label: string}> = [
@@ -161,6 +163,7 @@ export function TrackInspector({
   const [deleteArtworkArmed, setDeleteArtworkArmed] = useState(false);
   const [artworkMaxSize, setArtworkMaxSize] = useState(0);
   const [writeTag, setWriteTag] = useState(true);
+  const [exportLrc, setExportLrc] = useState(false);
   const [extendedOpen, setExtendedOpen] = useState(false);
   const [rawTags, setRawTags] = useState<Record<string, string[]> | null>(null);
   const [rawTagsOpen, setRawTagsOpen] = useState(false);
@@ -176,6 +179,7 @@ export function TrackInspector({
 	setDeleteArtworkArmed(false);
 	setArtworkMaxSize(0);
 	setWriteTag(true);
+	setExportLrc(false);
 	setExtendedOpen(false);
 	setRawTags(null);
 	setRawTagsOpen(false);
@@ -184,6 +188,11 @@ export function TrackInspector({
 
   const original = useMemo(() => track ? toPatch(track) : null, [track]);
   const dirty = Boolean(draft && original && !patchEqual(draft, original));
+
+  // 整轨 CUE 虚拟轨道没有独立音频文件，歌词无法内嵌，只能写 .lrc sidecar ——
+  // 此时强制勾选导出，避免歌词只留在曲库索引里、完整重扫即丢。
+  const cueVirtual = Boolean(track?.cuePath);
+  const exportLrcChecked = cueVirtual || exportLrc;
 
   const changedFields = useMemo<Array<[keyof TrackPatch, string]>>(() => {
     if (!draft || !original) return [];
@@ -661,11 +670,29 @@ export function TrackInspector({
             <div className="lyrics-options">
               <label>
                 <input type="checkbox" checked={writeTag} onChange={(event) => setWriteTag(event.target.checked)} />
-                写入音频标签（内嵌）
-                <small>歌词只写入当前音乐文件，不再生成或覆盖同名 .lrc</small>
+                {cueVirtual ? '写入 cue 标签（标题 / 艺术家等）' : '写入音频标签（内嵌）'}
+                <small>
+                  {cueVirtual
+                    ? '整轨虚拟轨道没有独立音频文件，歌词无法内嵌到音频里'
+                    : '歌词写进音频文件的元数据块（FLAC 的 Vorbis Comment）'}
+                </small>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={exportLrcChecked}
+                  disabled={cueVirtual}
+                  onChange={(event) => setExportLrc(event.target.checked)}
+                />
+                {cueVirtual ? '导出 .lrc 歌词文件（必选）' : '同时导出 .lrc 歌词文件'}
+                <small>
+                  {cueVirtual
+                    ? '整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc，这是唯一能持久化的方式'
+                    : '与音频同目录同名，如 歌曲.lrc，可单独编辑 / 拷贝给其他播放器'}
+                </small>
               </label>
             </div>
-            <p className="format-note">保存时会写入同目录临时副本，重读验证成功后再原子替换原文件；已有同名 .lrc 仅作为兼容信息读取。</p>
+            <p className="format-note">保存时先写同目录临时副本，重读验证后再原子替换原文件；歌词清空且已存在 .lrc 时会一并删除该文件。</p>
           </div>
         )}
 
@@ -759,7 +786,7 @@ export function TrackInspector({
                 className="primary-button"
                 disabled={saving}
                 onClick={async () => {
-                  await onSave(draft, {writeTag});
+                  await onSave(draft, {writeTag, exportLrc: exportLrcChecked});
                   setShowPreview(false);
                 }}
               >
