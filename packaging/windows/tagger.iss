@@ -20,7 +20,7 @@ AppPublisherURL=https://github.com/ttbb1211/tagger
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-SetupIconFile=..\..rontend\publicavicon.ico
+SetupIconFile=....rontendpublicavicon.ico
 LicenseFile=..\..\LICENSE
 OutputDir=..\..\release
 OutputBaseFilename=tagger_setup_{#APP_VERSION}_windows_amd64
