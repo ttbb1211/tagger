@@ -51,8 +51,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Filename: "{app}\tagger.exe"; Parameters: "{code:ShortcutParams}"; WorkingDir: "{localappdata}\{#DataDirName}"; Description: "启动 {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; 卸载不删音乐库与数据目录，仅提示位置
+; 卸载不删音乐库与数据目录；两个桌面位置的快捷方式都清扫，避免残留
 Type: files; Name: "{app}\tagger.exe"
+Type: files; Name: "{userdesktop}\Tagger.lnk"
+Type: files; Name: "{commondesktop}\Tagger.lnk"
 
 [Code]
 var
