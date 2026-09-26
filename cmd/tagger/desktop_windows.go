@@ -89,17 +89,11 @@ func startTray() {
 func onTrayReady() {
 	systray.SetIcon(appIconICO)
 	systray.SetTooltip("Tagger")
-	systray.SetOnClick(func() {
-		select {
-		case trayReopen <- struct{}{}:
-		default:
-		}
-	})
 	mOpen := systray.AddMenuItem("打开主窗口", "显示 Tagger 主窗口")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("完全退出", "结束 Tagger 服务并移除托盘图标")
 	go func() {
-		for range mOpen.Chan {
+		for range mOpen.ClickedCh {
 			select {
 			case trayReopen <- struct{}{}:
 			default:
@@ -107,7 +101,7 @@ func onTrayReady() {
 		}
 	}()
 	go func() {
-		for range mQuit.Chan {
+		for range mQuit.ClickedCh {
 			select {
 			case trayQuit <- struct{}{}:
 			default:
