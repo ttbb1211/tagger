@@ -263,6 +263,20 @@ export async function updateTrack(trackId: string, patch: TrackPatch, provenance
   return result.track;
 }
 
+/**
+ * 与 updateTrack 相同，但把后端的写入告警一并返回。
+ * 例如整轨 CUE 虚拟轨道写歌词时，后端会返回「CUE 不支持字段 lyrics，仅保存到曲库索引，
+ * 未写入 cue 文件」——这类字段级失败是「部分成功」，只看 track 看不出来，必须把 warnings 展示给用户。
+ */
+export async function updateTrackWithWarnings(trackId: string, patch: TrackPatch, provenance?: UpdateProvenance): Promise<{track: Track; warnings: string[]}> {
+  if (apiReadMode === 'mock') return {track: await mock.updateTrack(trackId, patch), warnings: []};
+  const current = realTrackCache.get(trackId);
+  if (!current) throw new Error('track_not_found');
+  const result = await real.updateTrack(current, patch, provenance);
+  realTrackCache.set(trackId, result.track);
+  return {track: result.track, warnings: result.write?.warnings ?? []};
+}
+
 export async function writeLyricsSidecar(trackId: string, content: string): Promise<Track> {
   if (apiReadMode === 'mock') return (await mock.writeLyricsSidecar(trackId, content)).track;
   const current = realTrackCache.get(trackId);

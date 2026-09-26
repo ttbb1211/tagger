@@ -4346,6 +4346,10 @@ button:disabled {
   color: var(--ink);
 }
 
+.asset-options label.is-wide {
+  grid-column: 1 / -1;
+}
+
 .asset-options strong,
 .asset-options small {
   display: block;

@@ -40,6 +40,7 @@ import {
 	  subscribeLibraryEvents,
   updateArtwork,
 	updateTrack,
+	updateTrackWithWarnings,
 	waitForJob,
 	writeLyricsSidecar,
 } from '@/api';
@@ -822,7 +823,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
     }
   };
 
-		const applyCandidate = async (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number}) => {
+		const applyCandidate = async (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean}) => {
 		  if (!activeTrack) return;
 		  if (!activeTrackIndexed) {
 			onNotice('当前文件仍在索引，完成后才能应用候选资料');
@@ -830,15 +831,41 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		  }
 	  setSaving(true);
 	  let tagsApplied = false;
+	  const exportLrc = options.exportLrc ?? false;
 	  try {
-		let updated = await updateTrack(activeTrack.id, patch, {providerId: candidate.providerId});
+		const writeResult = await updateTrackWithWarnings(activeTrack.id, patch, {providerId: candidate.providerId});
+		let updated = writeResult.track;
 		tagsApplied = true;
 		updateTrackState(updated);
 		if (options.artwork) {
 			  updated = await applyCandidateArtwork(updated.id, candidate.artworkRefId || candidate.id, options.artworkMaxSize ?? 0);
 		  updateTrackState(updated);
 		}
-		onNotice(tagWriteNotice(updated, `已采用 ${candidate.providerName} 候选并安全写入${options.artwork ? '标签与封面' : '音乐标签'}`));
+		// 可选：把歌词另存为独立 .lrc 文件（整轨 CUE 虚拟轨道唯一能真正落盘的方式）
+		let lrcNote = '';
+		if (exportLrc) {
+		  const lyrics = patch.lyrics ?? '';
+		  if (lyrics.trim() !== '') {
+			updated = await writeLyricsSidecar(updated.id, lyrics);
+			updateTrackState(updated);
+			lrcNote = '，歌词已导出为 .lrc 文件';
+		  } else if (updated.lyricsSidecar?.exists) {
+			updated = await deleteLyricsSidecar(updated.id);
+			updateTrackState(updated);
+			lrcNote = '，歌词为空，已删除 .lrc 文件';
+		  } else {
+			lrcNote = '，歌词为空，未生成 .lrc 文件';
+		  }
+		}
+		// 后端字段级告警必须露出来：整轨虚拟轨道写歌词会返回
+		// 「CUE 不支持字段 lyrics，仅保存到曲库索引，未写入 cue 文件」——
+		// 不显示的话用户只看到「已写入」，实际歌词根本没落盘。
+		const warnNote = writeResult.warnings.length > 0 ? `。注意：${writeResult.warnings.join('；')}` : '';
+		const cueUnpersisted = Boolean(activeTrack.cuePath) && !exportLrc && (patch.lyrics ?? '').trim() !== '';
+		const summary = cueUnpersisted
+		  ? '整轨虚拟轨道的歌词未导出 .lrc，只保留在曲库索引中（完整重扫会丢失）'
+		  : `已采用 ${candidate.providerName} 候选并安全写入${options.artwork ? '标签与封面' : '音乐标签'}${lrcNote}`;
+		onNotice(`${tagWriteNotice(updated, summary)}${warnNote}`);
 	  } catch (error) {
 		const message = error instanceof Error ? error.message : '候选资料应用失败';
 		onNotice(tagsApplied && options.artwork ? `标签已写入，但候选封面应用失败：${message}` : message);

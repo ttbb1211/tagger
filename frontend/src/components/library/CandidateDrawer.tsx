@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
+  FileText,
   Image,
   LoaderCircle,
   Music2,
@@ -25,7 +26,7 @@ interface CandidateDrawerProps {
   showGeneratedCovers?: boolean;
   onSearchQuery?: (query: CandidateSearchQuery) => Promise<void>;
   onClose: () => void;
-  onApply: (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number}) => Promise<void>;
+  onApply: (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean}) => Promise<void>;
 }
 
 function suspiciousAlbumArtist(candidate: MatchCandidate): boolean {
@@ -310,6 +311,7 @@ export function CandidateDrawer({
   const [fields, setFields] = useState<Set<FieldID>>(new Set());
   const [applying, setApplying] = useState(false);
   const [includeLyrics, setIncludeLyrics] = useState(false);
+  const [exportLrc, setExportLrc] = useState(false);
   const [lyricsDraft, setLyricsDraft] = useState('');
   const [selectedArtworkInfo, setSelectedArtworkInfo] = useState<{width: number; height: number}>();
   const [includeArtwork, setIncludeArtwork] = useState(false);
@@ -324,6 +326,7 @@ export function CandidateDrawer({
 	const first = recommendedCandidate(candidates);
 	setSelectedId(first?.id ?? null);
     setIncludeLyrics(focus === 'lyrics' && Boolean(first?.hasLyrics && first.lyrics?.value));
+    setExportLrc(false);
     setLyricsDraft(first?.lyrics?.value ?? '');
     setSelectedArtworkInfo(undefined);
     setIncludeArtwork(false);
@@ -389,6 +392,7 @@ export function CandidateDrawer({
     if (!selected) return;
     setFields(defaultCandidateFields(selected));
     setIncludeLyrics(focus === 'lyrics' && Boolean(selected.hasLyrics && selected.lyrics?.value));
+    setExportLrc(false);
     setLyricsDraft(selected.lyrics?.value ?? '');
     setSelectedArtworkInfo(undefined);
     setIncludeArtwork(false);
@@ -396,6 +400,10 @@ export function CandidateDrawer({
   }, [focus, selected]);
 
   if (!open || !track) return null;
+
+  // 整轨 CUE 虚拟轨道没有独立音频文件，歌词无法内嵌（cue 也不支持 LYRICS 字段），
+  // 想真正落盘只能写 .lrc sidecar；但「要不要歌词」由用户决定，不强制勾选。
+  const cueVirtual = Boolean(track.cuePath);
 
   const buildPatch = (): TrackPatch => {
     const patch: TrackPatch = {
@@ -630,7 +638,7 @@ export function CandidateDrawer({
                         <strong>歌词内容</strong>
                         <span>{selected.lyrics.source} · 写入前可编辑</span>
                       </div>
-                      {includeLyrics && <em>将写入内嵌标签</em>}
+                      {includeLyrics && <em>{cueVirtual ? '将写入 cue 标签' : '将写入内嵌标签'}</em>}
                     </div>
                     <textarea
                       aria-label="远程歌词内容"
@@ -638,7 +646,10 @@ export function CandidateDrawer({
                       onChange={(event) => setLyricsDraft(event.target.value)}
                       spellCheck={false}
                     />
-                    <small>可以修正错字、时间轴或补充内容；勾选下方“同时写入歌词”后才会保存到音频文件。</small>
+                    <small>
+                      可以修正错字、时间轴或补充内容；勾选下方“{cueVirtual ? '写入 cue 标签' : '同时写入歌词'}”后才会保存
+                      {cueVirtual ? '（整轨歌词需同时勾选“导出 .lrc 歌词文件”才能真正落盘）' : '到音频文件'}。
+                    </small>
                   </div>
                 )}
 
@@ -661,7 +672,32 @@ export function CandidateDrawer({
 					  onChange={(event) => setIncludeLyrics(event.target.checked)}
 					/>
                     <Music2 size={16} />
-                    <span><strong>同时写入歌词</strong><small>{selected.hasLyrics ? '勾选后把上方编辑后的歌词写入音频标签；不勾选则保留现有歌词' : '当前来源不提供歌词'}</small></span>
+                    <span>
+                      <strong>{cueVirtual ? '写入 cue 标签（标题 / 艺术家等）' : '同时写入歌词'}</strong>
+                      <small>
+                        {!selected.hasLyrics
+                          ? '当前来源不提供歌词'
+                          : cueVirtual
+                            ? '整轨虚拟轨道没有独立音频文件，歌词无法内嵌到音频里'
+                            : '勾选后把上方编辑后的歌词写入音频标签；不勾选则保留现有歌词'}
+                      </small>
+                    </span>
+                  </label>
+                  <label className={cn('is-wide', selected.hasLyrics && 'is-available')}>
+                    <input
+                      type="checkbox"
+                      checked={exportLrc}
+                      onChange={(event) => setExportLrc(event.target.checked)}
+                    />
+                    <FileText size={16} />
+                    <span>
+                      <strong>{cueVirtual ? '导出 .lrc 歌词文件' : '同时导出 .lrc 歌词文件'}</strong>
+                      <small>
+                        {cueVirtual
+                          ? '可选。整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc；不勾选则歌词只保留在曲库索引中，完整重扫会丢失'
+                          : '与音频同目录同名，如 歌曲.lrc；可单独编辑，或拷贝给其他播放器'}
+                      </small>
+                    </span>
                   </label>
                 </div>
                 <label className="artwork-size-control">
@@ -681,7 +717,7 @@ export function CandidateDrawer({
         <div className="candidate-footer">
           <button className="secondary-button" onClick={onClose}><ChevronLeft size={15} /> 返回编辑</button>
           <div>
-            <span>采用 {fields.size} 组字段 · 附加资源勾选后会写入音频内嵌数据</span>
+            <span>采用 {fields.size} 组字段 · 附加资源勾选后写入音频；.lrc 另存为独立歌词文件</span>
             <button
               className="primary-button"
               disabled={!selected || applying || loading}
@@ -689,7 +725,7 @@ export function CandidateDrawer({
                 if (!selected) return;
                 setApplying(true);
                 try {
-                  await onApply(buildPatch(), selected, {artwork: includeArtwork, ...(includeArtwork && artworkMaxSize > 0 ? {artworkMaxSize} : {})});
+                  await onApply(buildPatch(), selected, {artwork: includeArtwork, exportLrc, ...(includeArtwork && artworkMaxSize > 0 ? {artworkMaxSize} : {})});
                   onClose();
                 } finally {
                   setApplying(false);

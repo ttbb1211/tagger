@@ -61,7 +61,7 @@ it('keeps missing candidate fields and applies explicitly selected lyrics', asyn
 
   expect(screen.getByRole('textbox', {name: '远程歌词内容'})).toHaveValue('[00:01.00]new lyrics');
   fireEvent.change(screen.getByRole('textbox', {name: '远程歌词内容'}), {target: {value: '[00:01.00]edited lyrics'}});
-  await user.click(screen.getByRole('checkbox', {name: /歌词/}));
+  await user.click(screen.getByRole('checkbox', {name: /^同时写入歌词/}));
   await user.click(screen.getByRole('button', {name: '采用所选资料'}));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
   const patch = onApply.mock.calls[0][0];
@@ -95,7 +95,52 @@ it('passes an explicit artwork choice without exposing the remote URL', async ()
   await user.selectOptions(screen.getByRole('combobox', {name: '封面写入尺寸'}), '500');
   await user.click(screen.getByRole('button', {name: '采用所选资料'}));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
-  expect(onApply.mock.calls[0][2]).toEqual({artwork: true, artworkMaxSize: 500});
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: true, exportLrc: false, artworkMaxSize: 500});
+});
+
+it('leaves .lrc export optional and passes it through when the user opts in', async () => {
+  const user = userEvent.setup();
+  const onApply = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CandidateDrawer
+      open
+      track={track}
+      candidates={[candidate]}
+      loading={false}
+      onClose={() => undefined}
+      onApply={onApply}
+    />,
+  );
+
+  const lrc = screen.getByRole('checkbox', {name: /^同时导出 \.lrc 歌词文件/});
+  expect(lrc).not.toBeChecked();
+  expect(lrc).not.toBeDisabled();
+
+  await user.click(lrc);
+  await user.click(screen.getByRole('button', {name: '采用所选资料'}));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true});
+});
+
+it('explains that cue virtual tracks cannot embed lyrics and keeps .lrc optional', async () => {
+  const cueTrack: Track = {...track, cuePath: 'album.cue', startOffsetSeconds: 0, endOffsetSeconds: 120};
+  render(
+    <CandidateDrawer
+      open
+      track={cueTrack}
+      candidates={[candidate]}
+      loading={false}
+      onClose={() => undefined}
+      onApply={vi.fn().mockResolvedValue(undefined)}
+    />,
+  );
+
+  expect(screen.getByText('写入 cue 标签（标题 / 艺术家等）')).toBeInTheDocument();
+  expect(screen.getByText(/整轨虚拟轨道没有独立音频文件，歌词无法内嵌/)).toBeInTheDocument();
+  const lrc = screen.getByRole('checkbox', {name: /^导出 \.lrc 歌词文件/});
+  expect(lrc).not.toBeChecked();
+  expect(lrc).not.toBeDisabled();
+  expect(screen.getByText(/整轨虚拟轨道只能存为/)).toBeInTheDocument();
 });
 
 it('toggles all available metadata fields off when the select-all control is clicked again', async () => {
@@ -133,7 +178,7 @@ it('focuses the lyrics asset when opened from the lyrics inspector tab', () => {
     />,
   );
 
-  expect(screen.getByRole('checkbox', {name: /歌词/})).toBeChecked();
+  expect(screen.getByRole('checkbox', {name: /^同时写入歌词/})).toBeChecked();
 });
 
 it('allows the source query to be edited before searching again', async () => {
