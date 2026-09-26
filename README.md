@@ -44,18 +44,19 @@ Tagger 是一个使用 Go 构建的本地音乐元数据管理工具。它把音
 | 使用体验 | 跨页面全局播放器、浏览器路由、历史记录、主题/字体切换、无效封面默认留白、单用户可选访问令牌 |
 | 部署 | React 生产构建嵌入 Go 服务，运行时不需要 Node.js、FFmpeg 或系统 TagLib |
 | 整轨 CUE | 整轨 WAV/FLAC + .cue 专辑自动展开为虚拟曲目：刮削、审核、歌词一应俱全，音频文件零改动（本 fork，v1.3.0 起） |
+| 桌面客户端 | Windows 版默认弹出 WebView2 原生窗口（`-ui=window`），点关闭按钮即退出程序；可切浏览器模式或纯服务（本 fork，v1.4.0 起） |
 
 ## 本 fork 的增量（ttbb1211/tagger）
 
-本仓库是 [Ericwyn/tagger](https://github.com/Ericwyn/tagger) 的 fork，在上游基础上做了以下增强（2026-09-25）：
+本仓库是 [Ericwyn/tagger](https://github.com/Ericwyn/tagger) 的 fork，在上游基础上做了以下增强（2026-09-26）：
 
 - **整轨 CUE 专辑支持**（v1.3.0）：导入「整轨 WAV/FLAC + .cue」专辑自动展开为虚拟曲目，**音频文件零改动**——元数据写回 cue 文本文件（GBK/UTF-8 往返），歌词落 `.NNN.lrc` sidecar，封面专辑级共享；WAV 网页试听按 cue 精确分段，FLAC 暂从头播放。
-- **Windows 桌面版**：GitHub Actions 自动构建 Windows x86_64 **安装包 + 便携版**（`build-windows.yml`）。安装向导可选择音乐库目录（支持勾选「暂不设置，安装完成后手动指定」），数据目录独立于安装目录，服务仅监听 `127.0.0.1:8080`。产物在各次构建的 Artifacts 区下载；发布正式 Release 后会自动挂载到 Releases 页。
+- **Windows 桌面版**（v1.4.0 起）：GitHub Actions 自动构建 Windows x86_64 **安装包 + 便携版**（`build-windows.yml`）。双击启动即弹出 **WebView2 原生窗口**（`-ui=window`，默认档），**点窗口关闭按钮直接退出程序、不常驻后台**；亦可用 `-ui=browser` 回退浏览器、`-ui=server` 纯服务。安装向导可选择音乐库目录（支持勾选「暂不设置，安装完成后手动指定」），数据目录独立于安装目录，服务仅监听 `127.0.0.1:8080`。产物在 Releases 页与各次构建的 Artifacts 区。
 - **M4A 支持**：格式白名单加入 `.m4a`（MP4 容器，ALAC/AAC），扫描、刮削、标签/歌词写入与网页播放全覆盖。
 - **Windows 启动修复**：SQLite DSN 对 Windows 盘符路径生成 `file:///C:/...` 三斜杠 URI，修复 `invalid uri authority: C:` 导致的启动即退。
 - **CI 约定**：纯文档改动不触发构建（`paths-ignore`）；commit message 加 `[skip ci]` 可单次跳过。
 
-上述修复计划向上游提交 PR。**Windows/macOS/Linux 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.3.1）。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
+上述修复计划向上游提交 PR。**Windows/macOS/Linux 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.4.2）。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
 
 ## 一次典型的整理流程
 
