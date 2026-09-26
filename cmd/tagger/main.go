@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -597,7 +599,80 @@ func main() {
 		"tracks", libraryService.Library().TrackCount,
 		"version", version.Version,
 	)
-	srv.Spin()
+
+	// 启动界面模式：auto 在 Windows 上取窗口版，其余平台纯服务
+	uiMode := cfg.UI
+	if uiMode == "auto" {
+		if runtime.GOOS == "windows" {
+			uiMode = "window"
+		} else {
+			uiMode = "server"
+		}
+	}
+	switch {
+	case uiMode == "window" && runtime.GOOS == "windows":
+		// 桌面窗口模式：主线程锁定承载 WebView 消息循环，服务在后台 goroutine
+		runtime.LockOSThread()
+		hideConsoleWindow()
+		serverDone := make(chan struct{})
+		go func() {
+			defer close(serverDone)
+			srv.Spin()
+		}()
+		go func() {
+			<-serverDone
+			os.Exit(0) // 服务致命退出时进程随之结束
+		}()
+		if !waitForListener(cfg.Listen, 20*time.Second) {
+			logger.Warn("服务端口等待超时，无窗口保持后台运行")
+			<-serverDone
+			os.Exit(0)
+		}
+		url := webUIURL(cfg.Listen)
+		if runWebViewWindow(url, cfg.DataDir) {
+			os.Exit(0) // 窗口关闭即退出
+		}
+		logger.Warn("WebView2 运行时不可用，回退为打开默认浏览器")
+		openWebUI(url)
+		<-serverDone
+		os.Exit(0)
+	default:
+		srv.Spin()
+	}
+}
+
+// waitForListener 轮询直到服务开始接受 TCP 连接。
+func waitForListener(listen string, timeout time.Duration) bool {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return false
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	address := net.JoinHostPort(host, port)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("tcp", address, 500*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
+
+// webUIURL 把监听地址规整为浏览器/WebView 可打开的 URL。
+func webUIURL(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return ""
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("http://%s", net.JoinHostPort(host, port))
 }
 
 func formatMatchProgress(processed, total, providerQueries, candidateCount, failed int) string {

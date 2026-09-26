@@ -21,6 +21,7 @@ type Config struct {
 	WatchMode         domain.WatchMode
 	WatcherWait       time.Duration
 	ReconcileInterval time.Duration
+	UI                string
 	TestProviders     bool
 	TestTitle         string
 	TestArtists       string
@@ -68,6 +69,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 		WatchMode:         domain.WatchMode(valueOr(getenv("TAGGER_WATCH_MODE"), string(domain.WatchModeAuto))),
 		WatcherWait:       watcherWait,
 		ReconcileInterval: reconcileInterval,
+		UI:                valueOr(strings.ToLower(strings.TrimSpace(getenv("TAGGER_UI"))), "auto"),
 		TestTitle:         "最佳歌手",
 		TestArtists:       "许嵩",
 		TestLimit:         1,
@@ -83,6 +85,7 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	flags.Var((*watchModeValue)(&cfg.WatchMode), "watch-mode", "filesystem update mode: auto, events, or poll")
 	flags.DurationVar(&cfg.WatcherWait, "watcher-wait", cfg.WatcherWait, "debounce delay for filesystem changes")
 	flags.DurationVar(&cfg.ReconcileInterval, "reconcile-interval", cfg.ReconcileInterval, "optional periodic incremental reconciliation (0 disables)")
+	flags.StringVar(&cfg.UI, "ui", cfg.UI, "startup interface mode: auto, window, browser, or server")
 	flags.BoolVar(&cfg.TestProviders, "test-providers", false, "test every built-in metadata provider and exit")
 	flags.StringVar(&cfg.TestTitle, "test-title", cfg.TestTitle, "provider test song title")
 	flags.StringVar(&cfg.TestArtists, "test-artists", cfg.TestArtists, "comma-separated provider test artists")
@@ -120,6 +123,11 @@ func Parse(args []string, getenv func(string) string) (Config, error) {
 	}
 	if cfg.WatcherWait < 0 || cfg.WatcherWait > 10*time.Minute {
 		return Config{}, fmt.Errorf("watcher wait must be between 0 and 10 minutes")
+	}
+	switch cfg.UI {
+	case "auto", "window", "browser", "server":
+	default:
+		return Config{}, fmt.Errorf("invalid -ui mode: %s (must be auto, window, browser, or server)", cfg.UI)
 	}
 	if cfg.ReconcileInterval < 0 || cfg.ReconcileInterval > 30*24*time.Hour {
 		return Config{}, fmt.Errorf("reconcile interval must be between 0 and 720 hours")

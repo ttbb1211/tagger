@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/cloudwego/hertz v0.10.6
 	github.com/fsnotify/fsnotify v1.5.4
+	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/longbridgeapp/opencc v0.3.13
 	github.com/pressly/goose/v3 v3.27.3
 	go.senan.xyz/taglib v0.14.0
