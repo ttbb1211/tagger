@@ -3,18 +3,13 @@
 package main
 
 import (
-	_ "embed"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 
-	"github.com/getlantern/systray"
 	webview2 "github.com/jchv/go-webview2"
 )
-
-//go:embed icon.ico
-var appIconICO []byte
 
 var (
 	kernel32             = syscall.NewLazyDLL("kernel32.dll")
@@ -38,14 +33,9 @@ func openWebUI(url string) {
 	_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 }
 
-// trayReopen / trayQuit 由托盘菜单驱动主循环重开窗口或退出进程。
-var (
-	trayReopen = make(chan struct{}, 1)
-	trayQuit   = make(chan struct{}, 1)
-)
-
-// runWebViewWindow 在原生 WebView2 窗口中承载界面并阻塞至窗口关闭。
+// runWebViewWindow 在原生 WebView2 窗口中承载界面，并阻塞至窗口关闭。
 // 返回 false 表示 WebView2 运行时不可用，调用方应回退浏览器方案。
+// 窗口关闭（点标题栏 ×）后本函数返回，调用方随即结束进程——不常驻托盘。
 func runWebViewWindow(url, dataDir, appVersion string) (ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -76,43 +66,4 @@ func runWebViewWindow(url, dataDir, appVersion string) (ok bool) {
 // ensureDataDirExists 保证 WebView2 的用户数据目录存在。
 func ensureDataDirExists(dataDir string) {
 	_ = os.MkdirAll(filepath.Join(dataDir, "webview"), 0o755)
-}
-
-// startTray 启动托盘常驻图标：菜单「打开主窗口」重开界面，
-// 「完全退出」结束整个进程（服务与托盘一并退出）。
-func startTray() {
-	go func() {
-		systray.Run(onTrayReady, onTrayExit)
-	}()
-}
-
-func onTrayReady() {
-	systray.SetIcon(appIconICO)
-	systray.SetTooltip("Tagger")
-	mOpen := systray.AddMenuItem("打开主窗口", "显示 Tagger 主窗口")
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("完全退出", "结束 Tagger 服务并移除托盘图标")
-	go func() {
-		for range mOpen.ClickedCh {
-			select {
-			case trayReopen <- struct{}{}:
-			default:
-			}
-		}
-	}()
-	go func() {
-		for range mQuit.ClickedCh {
-			select {
-			case trayQuit <- struct{}{}:
-			default:
-			}
-		}
-	}()
-}
-
-func onTrayExit() {
-	select {
-	case trayQuit <- struct{}{}:
-	default:
-	}
 }
