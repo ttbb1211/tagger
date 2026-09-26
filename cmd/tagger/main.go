@@ -360,6 +360,9 @@ func main() {
 				Fields         []string `json:"fields"`
 				Artwork        bool     `json:"artwork"`
 				ArtworkMaxSize int      `json:"artworkMaxSize"`
+				// ExportLrc：勾选后把本次写入的歌词另存为独立 .lrc 文件
+				// （整轨 CUE 虚拟轨道唯一能真正落盘的方式）。
+				ExportLrc bool `json:"exportLrc"`
 			} `json:"items"`
 		}
 		if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
@@ -370,6 +373,7 @@ func main() {
 			candidate     providers.MatchCandidate
 			tagResult     filewrite.Result
 			artworkResult *filewrite.ArtworkResult
+			sidecarResult *filewrite.SidecarResult
 		}
 		completed := make([]completedWrite, 0, len(payload.Items))
 		succeeded, failed := 0, 0
@@ -407,6 +411,7 @@ func main() {
 				}
 			}
 			var artworkResult *filewrite.ArtworkResult
+			var sidecarResult *filewrite.SidecarResult
 			artworkFailedAfterTags := false
 			if err == nil {
 				ref, refErr := libraryService.FileRef(item.TrackID)
@@ -417,7 +422,8 @@ func main() {
 					if baseRevision == "" {
 						baseRevision = track.Revision
 					}
-					tagResult, writeErr := tagWriter.Write(ctx, ref, baseRevision, patchFromCandidate(candidate, item.Fields), false)
+					patch := patchFromCandidate(candidate, item.Fields)
+					tagResult, writeErr := tagWriter.Write(ctx, ref, baseRevision, patch, false)
 					if writeErr != nil {
 						err = writeErr
 					} else {
@@ -430,10 +436,36 @@ func main() {
 								artworkResult = &result
 							}
 						}
+						// ★ 勾选「同时导出 .lrc」时，把本次写入的歌词另存为独立文件。
+						// 整轨 CUE 虚拟轨道没有独立音频文件、歌词无法内嵌
+						// （CUE 不支持 LYRICS 字段），不做这一步歌词只会留在曲库
+						// 索引里，完整重扫即丢。
+						if err == nil && item.ExportLrc && patch.Lyrics != nil && patch.Lyrics.Value != "" {
+							sidecarBase := tagResult.CurrentRevision
+							if artworkResult != nil {
+								sidecarBase = artworkResult.CurrentRevision
+							}
+							snapshot, snapshotErr := tagWriter.ReadSidecar(ctx, ref)
+							if snapshotErr != nil {
+								err = fmt.Errorf("读取歌词 sidecar：%w", snapshotErr)
+							} else {
+								baseSidecarRevision := ""
+								if snapshot.Info != nil {
+									baseSidecarRevision = snapshot.Info.Revision
+								}
+								content := patch.Lyrics.Value
+								written, sidecarErr := tagWriter.WriteSidecar(ctx, ref, sidecarBase, baseSidecarRevision, &content, false)
+								if sidecarErr != nil {
+									err = fmt.Errorf("导出 .lrc 歌词文件：%w", sidecarErr)
+								} else {
+									sidecarResult = &written
+								}
+							}
+						}
 						// Keep every track whose tag phase completed so it can be
 						// rescanned and recorded even when the requested artwork phase
 						// failed. It is still one failed item in the job counters.
-						completed = append(completed, completedWrite{trackID: item.TrackID, candidate: candidate, tagResult: tagResult, artworkResult: artworkResult})
+						completed = append(completed, completedWrite{trackID: item.TrackID, candidate: candidate, tagResult: tagResult, artworkResult: artworkResult, sidecarResult: sidecarResult})
 					}
 				}
 			}
@@ -481,6 +513,20 @@ func main() {
 					resultRevision = item.artworkResult.CurrentRevision
 					action = "批量采用候选标签与封面"
 				}
+				// 歌词 sidecar 也计入历史：整轨虚拟轨道只有它一条 diff，
+				// 不记录的话这批写入在「历史」页会整条消失。
+				var beforeSidecar, afterSidecar *domain.SidecarSnapshot
+				if item.sidecarResult != nil && item.sidecarResult.Changed {
+					diff = append(diff, filewrite.SidecarDiff(*item.sidecarResult))
+					beforeSidecar = filewrite.SidecarResultSnapshot(item.sidecarResult, true)
+					afterSidecar = filewrite.SidecarResultSnapshot(item.sidecarResult, false)
+					resultRevision = item.sidecarResult.CurrentRevision
+					if item.artworkResult != nil {
+						action = "批量采用候选标签、封面与歌词文件"
+					} else {
+						action = "批量采用候选标签与歌词文件"
+					}
+				}
 				if len(diff) == 0 {
 					continue
 				}
@@ -489,7 +535,7 @@ func main() {
 					beforeArtwork = artworkRevisionSnapshot(item.artworkResult.Before)
 					afterArtwork = artworkRevisionSnapshot(item.artworkResult.After)
 				}
-				if _, historyErr := dataStore.CreateRevision(ctx, domain.Revision{LibraryID: libraryService.Library().ID, TrackID: track.ID, TrackTitle: track.Title, FileName: track.FileName, Action: action, Source: source, BaseRevision: baseRevision, ResultRevision: resultRevision, Diff: diff, CoverTone: track.CoverTone, BeforeTags: beforeTags, AfterTags: afterTags, BeforeArtwork: beforeArtwork, AfterArtwork: afterArtwork}); historyErr != nil {
+				if _, historyErr := dataStore.CreateRevision(ctx, domain.Revision{LibraryID: libraryService.Library().ID, TrackID: track.ID, TrackTitle: track.Title, FileName: track.FileName, Action: action, Source: source, BaseRevision: baseRevision, ResultRevision: resultRevision, Diff: diff, CoverTone: track.CoverTone, BeforeTags: beforeTags, AfterTags: afterTags, BeforeArtwork: beforeArtwork, AfterArtwork: afterArtwork, BeforeSidecar: beforeSidecar, AfterSidecar: afterSidecar}); historyErr != nil {
 					return fmt.Errorf("persist batch revision for %s: %w", item.trackID, historyErr)
 				}
 			}

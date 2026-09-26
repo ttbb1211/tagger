@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CircleAlert,
   FileCheck2,
+  FileText,
   LoaderCircle,
   RefreshCw,
   Search,
@@ -235,6 +236,9 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
 	const [rematching, setRematching] = useState(false);
 	const [rematchError, setRematchError] = useState('');
 	const [writeError, setWriteError] = useState('');
+	// 批次级选项：本批写入时是否把歌词另存为独立 .lrc 文件。
+	// 整轨 CUE 虚拟轨道没有独立音频文件、歌词无法内嵌，只有它才能让歌词真正落盘。
+	const [exportLrc, setExportLrc] = useState(false);
 	const [job, setJob] = useState<Job>();
 	const [candidatePickerOpen, setCandidatePickerOpen] = useState(false);
 	const [assetPreview, setAssetPreview] = useState<ReviewAssetPreview>();
@@ -361,6 +365,8 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
   const hasQueueFilter = Boolean(query.trim()) || statusFilter !== 'all' || sourceFilter !== 'all';
   const active = visibleItems.find(({track}) => track.id === activeId) ?? visibleItems[0] ?? (hasQueueFilter ? undefined : items[0]);
   const accepted = items.filter((item) => item.state === 'accepted').length;
+  // 已接受且属于整轨 CUE 虚拟轨道的曲目：不勾 .lrc 则其歌词只进曲库索引，完整重扫会丢
+  const acceptedCueTracks = items.filter((item) => item.state === 'accepted' && item.candidate && item.track.cuePath).length;
   const needsReview = items.filter((item) => item.state === 'review').length;
   const skipped = items.filter((item) => item.state === 'skipped').length;
 	const activeAvailableFields = active?.candidate ? availableFields(active.candidate) : [];
@@ -518,6 +524,7 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
           fields: item.fields,
           artwork: item.includeArtwork,
           artworkMaxSize: item.includeArtwork ? item.artworkMaxSize : 0,
+          exportLrc,
         })));
       } else {
         await new Promise((resolve) => window.setTimeout(resolve, 700));
@@ -619,6 +626,22 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
 	            <Check size={15} /> 接受所有自动推荐
           </button>
           <button className="secondary-button" onClick={onBack} disabled={applying}>保存草稿并返回</button>
+          <label className="review-lrc-option">
+            <input
+              type="checkbox"
+              checked={exportLrc}
+              onChange={(event) => setExportLrc(event.target.checked)}
+            />
+            <FileText size={15} />
+            <span>
+              <strong>同时导出 .lrc 歌词文件</strong>
+              <small>
+                {acceptedCueTracks > 0
+                  ? `本批含 ${acceptedCueTracks} 首整轨虚拟轨道：不勾选则其歌词只保留在曲库索引中，完整重扫会丢失`
+                  : '与音频同目录同名，可单独编辑或拷贝给其他播放器'}
+              </small>
+            </span>
+          </label>
           <button className="primary-button" disabled={accepted === 0 || applying} onClick={() => void confirmWrite()}>
             {applying ? <LoaderCircle className="spin" size={15} /> : <FileCheck2 size={15} />}
             确认并创建写入任务

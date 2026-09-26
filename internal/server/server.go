@@ -1324,6 +1324,10 @@ type writeSelection struct {
 	Fields         []string `json:"fields"`
 	Artwork        bool     `json:"artwork,omitempty"`
 	ArtworkMaxSize int      `json:"artworkMaxSize,omitempty"`
+	// ExportLrc 勾选后，在标签写入成功时把本次采用的歌词另存为独立 .lrc 文件。
+	// 整轨 CUE 虚拟轨道没有独立音频文件、歌词无法内嵌（CUE 不支持 LYRICS 字段），
+	// 只有这一步才能让歌词真正落盘、经得起完整重扫。
+	ExportLrc bool `json:"exportLrc,omitempty"`
 }
 
 type matchWriteRequest struct {
@@ -2004,10 +2008,10 @@ func (s *Server) handleLyricsSidecarMutation(ctx context.Context, c *app.Request
 	if result.Changed && s.historyEnabled(ctx) {
 		_, historyErr := s.store.CreateRevision(ctx, domain.Revision{
 			LibraryID: s.library.Library().ID, TrackID: updated.ID, TrackTitle: updated.Title, FileName: updated.FileName,
-			Action: sidecarAction(sidecarOperation(result)), Source: "手工编辑", BaseRevision: result.BaseRevision,
-			ResultRevision: updated.Revision, Diff: []domain.RevisionDiff{sidecarDiff(result)}, CoverTone: updated.CoverTone,
-			BeforeSidecar: sidecarAuditSnapshot(result.Before, result.BeforeContent),
-			AfterSidecar:  sidecarAuditSnapshot(result.After, result.AfterContent),
+			Action: sidecarAction(filewrite.SidecarOperation(result)), Source: "手工编辑", BaseRevision: result.BaseRevision,
+			ResultRevision: updated.Revision, Diff: []domain.RevisionDiff{filewrite.SidecarDiff(result)}, CoverTone: updated.CoverTone,
+			BeforeSidecar: filewrite.SidecarAuditSnapshot(result.Before, result.BeforeContent),
+			AfterSidecar:  filewrite.SidecarAuditSnapshot(result.After, result.AfterContent),
 		})
 		if historyErr != nil {
 			result.Warnings = append(result.Warnings, "sidecar 修订历史写入失败："+historyErr.Error())
@@ -2021,42 +2025,6 @@ func sidecarAction(operation domain.Operation) string {
 		return "删除歌词 sidecar"
 	}
 	return "写入歌词 sidecar"
-}
-
-func sidecarOperation(result filewrite.SidecarResult) domain.Operation {
-	if result.After != nil && result.After.Exists {
-		return domain.OperationSet
-	}
-	return domain.OperationDelete
-}
-
-func sidecarDiff(result filewrite.SidecarResult) domain.RevisionDiff {
-	return domain.RevisionDiff{
-		Field: "lyricsSidecar", Operation: sidecarOperation(result),
-		Before: sidecarAuditValue(result.Before), After: sidecarAuditValue(result.After),
-	}
-}
-
-func sidecarAuditValue(info *domain.SidecarInfo) any {
-	if info == nil || !info.Exists {
-		return nil
-	}
-	return map[string]any{
-		"exists":     info.Exists,
-		"revision":   info.Revision,
-		"sizeBytes":  info.SizeBytes,
-		"modifiedAt": info.ModifiedAt,
-	}
-}
-
-func sidecarAuditSnapshot(info *domain.SidecarInfo, content string) *domain.SidecarSnapshot {
-	if info == nil || !info.Exists {
-		return nil
-	}
-	return &domain.SidecarSnapshot{
-		Exists: info.Exists, Revision: info.Revision, SizeBytes: info.SizeBytes,
-		ModifiedAt: info.ModifiedAt, Content: content,
-	}
 }
 
 func (s *Server) handleSidecarError(c *app.RequestContext, err error) {
@@ -2803,7 +2771,7 @@ func (s *Server) handleRevisionRestoreRequest(ctx context.Context, c *app.Reques
 		result.Sidecar = sidecarResult
 		result.Changed = result.Changed || written.Changed
 		if written.Changed {
-			result.Diff = append(result.Diff, sidecarDiff(written))
+			result.Diff = append(result.Diff, filewrite.SidecarDiff(written))
 		}
 		result.Warnings = append(result.Warnings, written.Warnings...)
 	}
@@ -2835,7 +2803,7 @@ func (s *Server) handleRevisionRestoreRequest(ctx context.Context, c *app.Reques
 			ResultRevision: track.Revision, Diff: result.Diff, CoverTone: track.CoverTone,
 			BeforeTags: result.BeforeTags, AfterTags: result.AfterTags,
 			BeforeArtwork: artworkResultSnapshot(artworkResult, true), AfterArtwork: artworkResultSnapshot(artworkResult, false),
-			BeforeSidecar: sidecarResultSnapshot(sidecarResult, true), AfterSidecar: sidecarResultSnapshot(sidecarResult, false),
+			BeforeSidecar: filewrite.SidecarResultSnapshot(sidecarResult, true), AfterSidecar: filewrite.SidecarResultSnapshot(sidecarResult, false),
 		})
 		if historyErr != nil {
 			result.Warnings = append(result.Warnings, "修订历史写入失败："+historyErr.Error())
@@ -2879,16 +2847,6 @@ func revisionSidecarTarget(revision domain.Revision, target string) (*domain.Sid
 		return revision.AfterSidecar, true
 	}
 	return revision.BeforeSidecar, true
-}
-
-func sidecarResultSnapshot(result *filewrite.SidecarResult, before bool) *domain.SidecarSnapshot {
-	if result == nil {
-		return nil
-	}
-	if before {
-		return sidecarAuditSnapshot(result.Before, result.BeforeContent)
-	}
-	return sidecarAuditSnapshot(result.After, result.AfterContent)
 }
 
 func artworkResultSnapshot(result *filewrite.ArtworkResult, before bool) *domain.ArtworkSnapshot {

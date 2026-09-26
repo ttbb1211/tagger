@@ -64,8 +64,7 @@ describe('ReviewPage field selection', () => {
     expect(screen.getByRole('heading', {name: '愛上一個不回家的人'})).toBeInTheDocument();
   });
 
-  it('filters the review queue by persisted decision state and provider', async () => {
-    const user = userEvent.setup();
+  it('filters the review queue by persisted decision state and provider', async () => {    const user = userEvent.setup();
     render(<ReviewPage trackIds={['trk-001', 'trk-002']} onBack={vi.fn()} onComplete={vi.fn()} />);
 
     expect(await screen.findByRole('heading', {name: '审核抓取结果'})).toBeInTheDocument();
@@ -77,5 +76,17 @@ describe('ReviewPage field selection', () => {
 
     await user.selectOptions(screen.getByRole('combobox', {name: '候选来源筛选'}), 'netease');
     expect(screen.getByRole('combobox', {name: '候选来源筛选'})).toHaveValue('netease');
+  });
+
+  it('exposes an optional .lrc export switch for the whole write batch', async () => {
+    const user = userEvent.setup();
+    render(<ReviewPage trackIds={['trk-001']} onBack={vi.fn()} onComplete={vi.fn()} />);
+
+    expect(await screen.findByRole('heading', {name: '审核抓取结果'})).toBeInTheDocument();
+    const lrc = screen.getByRole('checkbox', {name: /同时导出 \.lrc 歌词文件/});
+    expect(lrc).not.toBeChecked();
+
+    await user.click(lrc);
+    expect(lrc).toBeChecked();
   });
 });

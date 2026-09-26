@@ -292,6 +292,8 @@ export interface WriteSelection {
   fields: string[];
   artwork?: boolean;
   artworkMaxSize?: number;
+  /** 勾选后把本次写入的歌词另存为独立 .lrc 文件（整轨 CUE 虚拟轨道唯一能落盘的方式） */
+  exportLrc?: boolean;
 }
 
 export type BatchEditMode = 'set' | 'append' | 'delete' | 'replace';
