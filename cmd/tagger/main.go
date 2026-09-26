@@ -614,6 +614,7 @@ func main() {
 		// 桌面窗口模式：主线程锁定承载 WebView 消息循环，服务在后台 goroutine
 		runtime.LockOSThread()
 		hideConsoleWindow()
+		startTray()
 		serverDone := make(chan struct{})
 		go func() {
 			defer close(serverDone)
@@ -629,13 +630,21 @@ func main() {
 			os.Exit(0)
 		}
 		url := webUIURL(cfg.Listen)
-		if runWebViewWindow(url, cfg.DataDir) {
-			os.Exit(0) // 窗口关闭即退出
+		if !runWebViewWindow(url, cfg.DataDir) {
+			logger.Warn("WebView2 运行时不可用，回退为打开默认浏览器")
+			openWebUI(url)
 		}
-		logger.Warn("WebView2 运行时不可用，回退为打开默认浏览器")
-		openWebUI(url)
-		<-serverDone
-		os.Exit(0)
+		for {
+			// 窗口已关闭 → 托盘常驻：等「打开主窗口」重开界面，或「完全退出」
+			select {
+			case <-trayReopen:
+				if !runWebViewWindow(url, cfg.DataDir) {
+					openWebUI(url)
+				}
+			case <-trayQuit:
+				os.Exit(0)
+			}
+		}
 	default:
 		srv.Spin()
 	}
