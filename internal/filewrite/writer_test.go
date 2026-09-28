@@ -484,6 +484,60 @@ func TestWriterValidateWritableResolvesCueVirtualTrack(t *testing.T) {
 	}
 }
 
+// 规则：整轨 CUE 虚拟轨道的父音频只读 —— 封面写入必须跳过，不能嵌进父音频。
+// 嵌进父音频会改它的大小与 mtime，进而让同专辑所有兄弟轨道的 revision 集体
+// 失效（老板 2026-09-28 实测 12 首整轨写入 11/11 全失败）。
+func TestWriterSkipsArtworkForCueVirtualTrackAndLeavesParentUntouched(t *testing.T) {
+	root := t.TempDir()
+	audioPath := filepath.Join(root, "album.wav")
+	if err := os.WriteFile(audioPath, []byte("fake wav bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cueBody := "PERFORMER \"A\"\nTITLE \"Album\"\nFILE \"album.wav\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n"
+	if err := os.WriteFile(filepath.Join(root, "album.cue"), []byte(cueBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	engine := newArtworkMemoryEngine(map[string][]string{"TITLE": {"Album"}}, nil)
+	writer, err := New(root, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	virtual := domain.CueVirtualPath("album.wav", 1)
+	ref := library.FileRef{
+		ID:           "trk-cue-1",
+		RelativePath: virtual,
+		AbsolutePath: filepath.Join(root, filepath.FromSlash(virtual)),
+		Format:       domain.FormatWAV,
+	}
+	target := &artwork.Asset{MIME: "image/png", Data: []byte("fake-cover-bytes")}
+
+	result, err := writer.WriteArtwork(context.Background(), ref, "rev-whatever", 0, target, false)
+	if err != nil {
+		t.Fatalf("整轨封面写入必须是「跳过」而不是报错：%v", err)
+	}
+	if result.Changed {
+		t.Fatalf("整轨封面结果 = %#v，want Changed=false", result)
+	}
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "不改动父音频") {
+		t.Fatalf("整轨封面告警 = %#v", result.Warnings)
+	}
+	after, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("父音频被改动了：size %d -> %d, mtime %v -> %v", before.Size(), after.Size(), before.ModTime(), after.ModTime())
+	}
+	if len(engine.artworks) != 0 {
+		t.Fatalf("封面被写进了父音频：%#v", engine.artworks)
+	}
+}
+
 func TestWriterRestoresManagedSnapshotAndPreservesPrivateTags(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "song.flac")

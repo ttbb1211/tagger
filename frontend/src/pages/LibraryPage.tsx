@@ -851,7 +851,9 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		  tagsApplied = true;
 		  updateTrackState(updated);
 		}
-		if (options.artwork) {
+		// 整轨父音频只读：不请求封面写入，也不在提示里谎称写了封面。
+		const artworkApplies = options.artwork && !activeTrack.cuePath;
+		if (artworkApplies) {
 			  updated = await applyCandidateArtwork(updated.id, candidate.artworkRefId || candidate.id, options.artworkMaxSize ?? 0);
 		  updateTrackState(updated);
 		}
@@ -879,7 +881,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		const summary = cueUnpersisted
 		  ? '整轨虚拟轨道的歌词未导出 .lrc，只保留在曲库索引中（完整重扫会丢失）'
 		  : writeTag
-			? `已采用 ${candidate.providerName} 候选并安全写入${options.artwork ? '标签与封面' : '音乐标签'}${lrcNote}`
+			? `已采用 ${candidate.providerName} 候选并安全写入${artworkApplies ? '标签与封面' : '音乐标签'}${lrcNote}`
 			: `已采用 ${candidate.providerName} 候选歌词，未改动文件标签${lrcNote}`;
 		onNotice(writeTag ? `${tagWriteNotice(updated, summary)}${warnNote}` : `${summary}${warnNote}`);
 	  } catch (error) {

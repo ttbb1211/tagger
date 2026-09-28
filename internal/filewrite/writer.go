@@ -37,6 +37,13 @@ var (
 	ErrSidecarConflict    = errors.New("lyrics sidecar revision conflict")
 )
 
+// CueParentReadOnlyWarning 说明整轨 CUE 虚拟轨道为什么跳过封面写入。
+//
+// ★ 规则：整轨的父音频只读，一个字节都不写。标签写 cue、歌词写 .lrc，
+// 封面不写内嵌。父整轨是用户的原件，改它既没有必要（同目录外部图片
+// 一样能被播放器读到），又会让同专辑所有兄弟轨道的 revision 集体失效。
+const CueParentReadOnlyWarning = "整轨 CUE 虚拟轨道不改动父音频，封面已跳过：标签写 cue、歌词写 .lrc"
+
 type RevisionConflictError struct {
 	Expected string
 	Current  string
@@ -526,13 +533,24 @@ func (w *Writer) WriteArtwork(ctx context.Context, ref library.FileRef, baseRevi
 	if index < 0 || index > 31 {
 		return ArtworkResult{}, ErrArtworkIndex
 	}
-	// 虚拟轨道的封面写入嵌入父整轨文件（专辑级封面，全部虚拟轨共享）
+	// ★ 整轨父音频只读：绝不写入，只报告跳过。
+	//
+	// 整轨 CUE 虚拟轨道在磁盘上没有自己的音频文件，父整轨是用户的原件。
+	// 以前这里把封面嵌进父音频，代价是改动文件本体（大小 + mtime 都变），
+	// 并让同专辑所有兄弟轨道的 revision 集体失效 —— 2026-09-28 实测 12 首
+	// 整轨写入 11/11 全失败。现在封面一律不写内嵌。
 	if domain.IsCueVirtualPath(ref.RelativePath) {
-		parent, _, err := w.cueParentRef(ref)
+		raw, err := w.ReadRawTags(ctx, ref)
 		if err != nil {
 			return ArtworkResult{}, err
 		}
-		return w.WriteArtwork(ctx, parent, baseRevision, index, target, dryRun)
+		return ArtworkResult{
+			BaseRevision: baseRevision, CurrentRevision: baseRevision,
+			DryRun: dryRun, Changed: false,
+			Diff:       []FieldDiff{},
+			Warnings:   []string{CueParentReadOnlyWarning},
+			BeforeTags: cloneRawTags(raw), AfterTags: cloneRawTags(raw),
+		}, nil
 	}
 	engine, ok := w.engine.(tags.ArtworkEngine)
 	if !ok {

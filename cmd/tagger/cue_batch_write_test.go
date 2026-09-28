@@ -20,7 +20,9 @@ import (
 
 // cueArtworkEngine 是整轨批次回归测试用的假引擎。它如实模拟真实引擎里唯一
 // 关键的那条副作用：写封面会改动音频文件本体（大小 + mtime），从而刷新
-// scanner.FileRevision —— 这正是同专辑兄弟轨道 revision 集体失效的根源。
+// scanner.FileRevision。整轨的 revision 是按父音频算的，所以这条副作用正是
+// 「同专辑兄弟轨道 revision 集体失效」的根源 —— 保留它当绊线：一旦有人再把
+// 封面写回父音频，文件就变大，用例立刻红。
 type cueArtworkEngine struct {
 	mu      sync.Mutex
 	raw     map[string]map[string][]string
@@ -107,14 +109,25 @@ func (e *cueArtworkEngine) WriteArtwork(_ context.Context, path string, _ int, d
 	return file.Close()
 }
 
-// 回归：整轨 CUE 虚拟轨道批量写入时，写封面会改动共用的父音频，从而刷新同专辑
-// 所有兄弟轨道的 revision。不同步的话第 2 首起全部 revision_changed
-// （老板 2026-09-28 实测：12 首整轨写入 11/11 全失败，父音频被嵌了 76KB 的 ID3 块）。
-func TestBatchEditKeepsCueVirtualSiblingsWritableAfterArtworkWrite(t *testing.T) {
+// 回归：整轨父音频只读（老板 2026-09-28 定的规则）。
+//
+// 假引擎如实模拟真实引擎那条要命的副作用：写封面会改动音频文件本体（大小 +
+// mtime），从而刷新 scanner.FileRevision。旧实现把整轨封面嵌进父音频，同专辑
+// 所有兄弟轨道的 revision 集体失效 —— 实测 12 首整轨写入 11/11 全失败，父音频
+// 被嵌了 76KB 的 ID3 块。
+//
+// 现在规则是：整轨只写 cue 与 .lrc，父音频一个字节都不动。这个用例同时守住
+// 两件事 —— ① 批次照旧全部成功；② 谁再把封面塞回父音频，文件就会变大，用例
+// 立刻红。
+func TestBatchEditSkipsCueArtworkAndKeepsParentUntouched(t *testing.T) {
 	root := t.TempDir()
 	audioPath := filepath.Join(root, "album.wav")
 	const placeholder = "RIFF....WAVEfmt "
 	if err := os.WriteFile(audioPath, []byte(placeholder), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(audioPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	cueBody := "PERFORMER \"甲\"\nTITLE \"专辑\"\nFILE \"album.wav\" WAVE\n" +
@@ -182,10 +195,24 @@ func TestBatchEditKeepsCueVirtualSiblingsWritableAfterArtworkWrite(t *testing.T)
 	if job.State != domain.JobSucceeded || job.Succeeded != len(items) || job.Failed != 0 {
 		t.Fatalf("整轨批次写入结果 = %#v（兄弟轨道 revision 未同步）", job)
 	}
-	// 封面确实写进了父音频，否则这个用例根本没验到真正的原因。
-	if info, err := os.Stat(audioPath); err != nil || info.Size() <= int64(len(placeholder)) {
-		t.Fatalf("父音频没有被写入封面: %#v err=%v", info, err)
+
+	// ★ 核心断言：父音频一个字节都没动。
+	after, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if after.Size() != before.Size() {
+		t.Fatalf("父音频被改动了: size %d -> %d（封面不该写内嵌）", before.Size(), after.Size())
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("父音频 mtime 被刷新: %v -> %v", before.ModTime(), after.ModTime())
+	}
+	// 引擎一次都没被要求往父音频写封面。
+	if len(engine.artwork) != 0 {
+		t.Fatalf("封面被写入了整轨文件: %#v", engine.artwork)
+	}
+
+	// 该写的地方照旧写：两条虚拟轨道的标签都进了 cue。
 	written, err := os.ReadFile(filepath.Join(root, "album.cue"))
 	if err != nil || strings.Count(string(written), "改过的标题") != 2 {
 		t.Fatalf("cue 未被两条虚拟轨道写入: %q err=%v", written, err)

@@ -317,14 +317,15 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
         const noMatch = !candidate || itemState === 'no_match' || itemState === 'failed';
         const persistedFields = reviewFieldsByTrack.get(track.id);
         const artworkTouched = reviewArtworkTouchedByTrack.get(track.id) ?? false;
-        const defaultIncludeArtwork = Boolean(candidate?.hasArtwork && track.artworkCount === 0);
+        const defaultIncludeArtwork = Boolean(candidate?.hasArtwork && track.artworkCount === 0 && !track.cuePath);
         return {
           track,
           candidate,
           candidates,
           fields: candidate ? (persistedFields == null ? changedFields(track, candidate) : persistedFields) : [],
 	      artworkTouched,
-          includeArtwork: artworkTouched ? (reviewArtworkByTrack.get(track.id) ?? false) : defaultIncludeArtwork,
+          // 整轨父音频只读：不管历史里存过什么，都不给整轨请求封面写入。
+          includeArtwork: track.cuePath ? false : (artworkTouched ? (reviewArtworkByTrack.get(track.id) ?? false) : defaultIncludeArtwork),
 		  artworkMaxSize: reviewArtworkMaxSizeByTrack.get(track.id) ?? 0,
           error: errorByTrack.get(track.id),
 	          state: noMatch || itemState === 'skipped' ? 'skipped' as const : itemState === 'accepted' ? 'accepted' as const : itemState === 'review' ? 'review' as const : candidate?.autoAccept ? 'accepted' as const : 'review' as const,
@@ -449,7 +450,7 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
     if (!item) return;
     const includeArtwork = item.artworkTouched
       ? item.includeArtwork && nextCandidate.hasArtwork
-      : Boolean(nextCandidate.hasArtwork && item.track.artworkCount === 0);
+      : Boolean(nextCandidate.hasArtwork && item.track.artworkCount === 0 && !item.track.cuePath);
     const nextFields = changedFields(item.track, nextCandidate);
     setItems((current) => current.map((entry) => entry.track.id === trackId
       ? {...entry, candidate: nextCandidate, fields: nextFields, includeArtwork, state: 'review'}
@@ -460,7 +461,7 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
 
   const toggleArtwork = (trackId: string) => {
     const item = items.find((entry) => entry.track.id === trackId);
-    if (!item) return;
+    if (!item || item.track.cuePath) return;
     const includeArtwork = !item.includeArtwork;
     const artworkMaxSize = includeArtwork ? item.artworkMaxSize : 0;
     setItems((current) => current.map((entry) => entry.track.id === trackId ? {...entry, includeArtwork, artworkTouched: true, artworkMaxSize} : entry));
@@ -489,7 +490,7 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
           candidate,
           candidates,
           fields: candidate ? changedFields(active.track, candidate) : [],
-          includeArtwork: Boolean(candidate?.hasArtwork && active.track.artworkCount === 0),
+          includeArtwork: Boolean(candidate?.hasArtwork && active.track.artworkCount === 0 && !active.track.cuePath),
           artworkTouched: false,
           artworkMaxSize: 0,
 	          state: candidate ? (result.state === 'accepted' ? 'accepted' : 'review') : 'skipped',
@@ -793,7 +794,9 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
 	              {active.candidate.acoustidId?.value && <ReviewDiff field="acoustidId" label="AcoustID" current={active.track.acoustidId || '空'} next={active.candidate.acoustidId.value} source={candidateFieldSource(active.candidate, 'acoustidId')} checked={active.fields.includes('acoustidId')} onToggle={() => toggleField(active.track.id, 'acoustidId')} />}
 	              {active.candidate.acoustidFingerprint?.value && <ReviewDiff field="acoustidFingerprint" label="AcoustID 指纹" current={active.track.acoustidFingerprint || '空'} next={active.candidate.acoustidFingerprint.value} source={candidateFieldSource(active.candidate, 'acoustidFingerprint')} checked={active.fields.includes('acoustidFingerprint')} onToggle={() => toggleField(active.track.id, 'acoustidFingerprint')} />}
 	              {active.candidate.lyrics?.value && <ReviewDiff field="lyrics" label="内嵌歌词" current={active.track.lyrics ? '已有歌词' : '空'} next="来源提供歌词" source={candidateFieldSource(active.candidate, 'lyrics')} checked={active.fields.includes('lyrics')} onToggle={() => toggleField(active.track.id, 'lyrics')} inspectLabel="查看歌词" onInspect={() => setAssetPreview({kind: 'lyrics', track: active.track, candidate: active.candidate!})} />}
-	              {active.candidate.hasArtwork && <ReviewDiff field="artwork" label="替换封面" current={active.track.artworkCount > 0 ? '已有封面' : '空'} next="来源提供封面" source={candidateFieldSource(active.candidate, 'artwork')} checked={active.includeArtwork} onToggle={() => toggleArtwork(active.track.id)} inspectLabel="查看封面" onInspect={() => setAssetPreview({kind: 'artwork', track: active.track, candidate: active.candidate!})} />}
+	              {active.candidate.hasArtwork && (active.track.cuePath
+	                ? <ReviewDiff field="artwork" label="替换封面" current="整轨父音频只读" next="已跳过" source="Tagger 规则" checked={false} disabled onToggle={() => undefined} warning="整轨不改动父音频：标签写 cue、歌词写 .lrc，封面不写内嵌" />
+	                : <ReviewDiff field="artwork" label="替换封面" current={active.track.artworkCount > 0 ? '已有封面' : '空'} next="来源提供封面" source={candidateFieldSource(active.candidate, 'artwork')} checked={active.includeArtwork} onToggle={() => toggleArtwork(active.track.id)} inspectLabel="查看封面" onInspect={() => setAssetPreview({kind: 'artwork', track: active.track, candidate: active.candidate!})} />)}
             </div>
 			<div className="review-fields-actions">
 			  <span>已选择 {active.fields.filter((field) => activeAvailableFields.includes(field)).length} / {activeAvailableFields.length} 个可用字段</span>
@@ -805,7 +808,7 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
 			  >{allActiveFieldsSelected ? '全部取消' : '全选字段'}</button>
 			</div>
 
-            {active.candidate.hasArtwork && (
+            {active.candidate.hasArtwork && !active.track.cuePath && (
               <div className="review-artwork-size-control">
                 <label className="review-artwork-size-select">
                   <span>封面写入尺寸</span>
@@ -938,6 +941,7 @@ function ReviewDiff({
   inspectLabel,
   onInspect,
   warning,
+  disabled = false,
 }: {
   field: string;
   checked: boolean;
@@ -950,10 +954,11 @@ function ReviewDiff({
   inspectLabel?: string;
   onInspect?: () => void;
   warning?: string;
+  disabled?: boolean;
 }) {
   return (
-    <div className={cn('review-diff-row', !checked && 'is-disabled')} data-field={field}>
-      <button type="button" aria-label={`${checked ? '取消采用' : '采用'}${label}`} className={cn('square-check', checked && 'is-checked')} onClick={onToggle}>
+    <div className={cn('review-diff-row', (!checked || disabled) && 'is-disabled')} data-field={field}>
+      <button type="button" disabled={disabled} aria-label={`${checked ? '取消采用' : '采用'}${label}`} className={cn('square-check', checked && 'is-checked')} onClick={onToggle}>
         {checked && <Check size={12} strokeWidth={3} />}
       </button>
       <strong>{label}</strong>

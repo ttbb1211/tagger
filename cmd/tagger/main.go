@@ -443,11 +443,17 @@ func main() {
 								err = fmt.Errorf("写入候选封面：%w", artworkErr)
 								artworkFailedAfterTags = true
 							} else {
-								artworkResult = &result
-								// 封面嵌进父音频会刷新它的 size/mtime，这里把新
-								// revision 传给后续兄弟轨道，否则第 2 首起全部
-								// revision_changed。
-								cueRevisions.record(track.RelativePath, result.CurrentRevision)
+								tagResult.Warnings = append(tagResult.Warnings, result.Warnings...)
+								// 整轨虚拟轨道按规则不写内嵌封面，返回的是「跳过」
+								// 结果（Changed=false）；只有真改动了封面才算写入
+								// 封面，否则历史里不该出现封面。
+								if result.Changed {
+									artworkResult = &result
+									// 封面写进音频会刷新它的 size/mtime，这里把新
+									// revision 传给后续兄弟轨道，否则第 2 首起全部
+									// revision_changed。
+									cueRevisions.record(track.RelativePath, result.CurrentRevision)
+								}
 							}
 						}
 						// ★ 勾选「同时导出 .lrc」时，把本次写入的歌词另存为独立文件。
@@ -1004,9 +1010,13 @@ func newBatchEditHandler(libraryService *library.Service, tagWriter *filewrite.W
 							result.CurrentRevision = artworkResult.CurrentRevision
 							result.Diff = append(result.Diff, artworkResult.Diff...)
 							result.Warnings = append(result.Warnings, artworkResult.Warnings...)
-							artworkResultCopy := artworkResult
-							completedArtworkResult = &artworkResultCopy
-							cueRevisions.record(track.RelativePath, artworkResult.CurrentRevision)
+							// 整轨虚拟轨道按规则不写内嵌封面（Changed=false），
+							// 这种情况历史里不该出现封面。
+							if artworkResult.Changed {
+								artworkResultCopy := artworkResult
+								completedArtworkResult = &artworkResultCopy
+								cueRevisions.record(track.RelativePath, artworkResult.CurrentRevision)
+							}
 						}
 					}
 				}
