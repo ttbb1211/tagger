@@ -437,3 +437,56 @@ func TestPatchFromBatchEditBuildsExplicitOperations(t *testing.T) {
 }
 
 func ptr(value int) *int { return &value }
+
+// 整轨批次：同专辑的虚拟轨道共用父音频，本批次自己写出的 revision 必须传给
+// 后面的兄弟轨道；批次第一条则用曲库索引里的当前值，不用审核页带下来的过期值。
+func TestCueRevisionTrackerSharesOneRevisionAcrossSiblingVirtualTracks(t *testing.T) {
+	tracker := &cueRevisionTracker{}
+	first := domain.Track{RelativePath: "album.wav#cue:1", Revision: "rev-index"}
+	second := domain.Track{RelativePath: "album.wav#cue:2", Revision: "rev-index"}
+
+	if got := tracker.base(first, "rev-stale-page"); got != "rev-index" {
+		t.Fatalf("first base revision = %q, want 曲库索引里的当前值", got)
+	}
+	tracker.record(first.RelativePath, "rev-after-artwork")
+	if got := tracker.base(second, "rev-stale-page"); got != "rev-after-artwork" {
+		t.Fatalf("sibling base revision = %q, want 本批次刚写出的值", got)
+	}
+	other := domain.Track{RelativePath: "other.wav#cue:1", Revision: "rev-other"}
+	if got := tracker.base(other, "rev-page-other"); got != "rev-other" {
+		t.Fatalf("unrelated parent base revision = %q", got)
+	}
+}
+
+// 非整轨必须原样用客户端给的 revision，tracker 不得插手。
+func TestCueRevisionTrackerLeavesPlainTracksOnTheClientRevision(t *testing.T) {
+	tracker := &cueRevisionTracker{}
+	plain := domain.Track{RelativePath: "song.flac", Revision: "rev-index"}
+	if got := tracker.base(plain, "rev-page"); got != "rev-page" {
+		t.Fatalf("plain track base revision = %q", got)
+	}
+	tracker.record(plain.RelativePath, "rev-written")
+	if got := tracker.base(plain, "rev-page"); got != "rev-page" {
+		t.Fatalf("plain track base revision after record = %q", got)
+	}
+	tracker.record("album.wav#cue:3", "")
+	if got := tracker.base(domain.Track{RelativePath: "album.wav#cue:3"}, "rev-client"); got != "rev-client" {
+		t.Fatalf("空 revision 被记进了 tracker: %q", got)
+	}
+}
+
+// 索引里没有 revision 时（例如刚扫描出来的草稿）退回客户端值，不要写空。
+func TestCueRevisionTrackerFallsBackToClientRevisionWithoutIndexValue(t *testing.T) {
+	tracker := &cueRevisionTracker{}
+	draft := domain.Track{RelativePath: "album.wav#cue:9"}
+	if got := tracker.base(draft, "rev-client"); got != "rev-client" {
+		t.Fatalf("draft base revision = %q", got)
+	}
+	if _, ok := cueParentOf("song.flac"); ok {
+		t.Fatal("普通文件被当成了 cue 虚拟轨道")
+	}
+	if parent, ok := cueParentOf("album.wav#cue:9"); !ok || parent != "album.wav" {
+		t.Fatalf("cueParentOf = %q %v", parent, ok)
+	}
+}
+

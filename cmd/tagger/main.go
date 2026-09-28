@@ -368,6 +368,11 @@ func main() {
 		if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
 			return err
 		}
+		writeTrackIDs := make([]string, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			writeTrackIDs = append(writeTrackIDs, item.TrackID)
+		}
+		refreshCueVirtualTracks(ctx, libraryService, writeTrackIDs)
 		type completedWrite struct {
 			trackID       string
 			candidate     providers.MatchCandidate
@@ -378,6 +383,7 @@ func main() {
 		completed := make([]completedWrite, 0, len(payload.Items))
 		succeeded, failed := 0, 0
 		var lastFailure error
+		cueRevisions := &cueRevisionTracker{}
 		for index, item := range payload.Items {
 			matchItem, err := dataStore.MatchItem(ctx, payload.MatchJobID, item.TrackID)
 			var candidate providers.MatchCandidate
@@ -422,11 +428,15 @@ func main() {
 					if baseRevision == "" {
 						baseRevision = track.Revision
 					}
+					// 整轨：同一父音频下的虚拟轨道共用 cue 与内嵌封面，本批次
+					// 自己写出的 revision 要记下来给后面的兄弟轨道用。
+					baseRevision = cueRevisions.base(track, baseRevision)
 					patch := patchFromCandidate(candidate, item.Fields)
 					tagResult, writeErr := tagWriter.Write(ctx, ref, baseRevision, patch, false)
 					if writeErr != nil {
 						err = writeErr
 					} else {
+						cueRevisions.record(track.RelativePath, tagResult.CurrentRevision)
 						if artworkTarget != nil {
 							result, artworkErr := tagWriter.WriteArtwork(ctx, ref, tagResult.CurrentRevision, 0, artworkTarget, false)
 							if artworkErr != nil {
@@ -434,6 +444,10 @@ func main() {
 								artworkFailedAfterTags = true
 							} else {
 								artworkResult = &result
+								// 封面嵌进父音频会刷新它的 size/mtime，这里把新
+								// revision 传给后续兄弟轨道，否则第 2 首起全部
+								// revision_changed。
+								cueRevisions.record(track.RelativePath, result.CurrentRevision)
 							}
 						}
 						// ★ 勾选「同时导出 .lrc」时，把本次写入的歌词另存为独立文件。
@@ -831,12 +845,104 @@ func finalizeMatchJobAfterWrite(ctx context.Context, manager *jobs.Manager, data
 	return manager.Update(ctx, matchJob)
 }
 
+// cueParentOf 返回 cue 虚拟轨道（伪路径 <父音频>#cue:N）的父音频相对路径。
+func cueParentOf(relativePath string) (string, bool) {
+	if !domain.IsCueVirtualPath(relativePath) {
+		return "", false
+	}
+	parent, _, err := domain.ParseCueVirtualPath(relativePath)
+	if err != nil {
+		return "", false
+	}
+	return parent, true
+}
+
+// cueRevisionTracker 负责整轨批次里的 revision 记账。
+//
+// 整轨 CUE 虚拟轨道在磁盘上没有自己的文件：标签写进共用的 <父音频>.cue，
+// 封面嵌进共用的父音频。而虚拟轨道的 revision 是按父音频的
+// 「相对路径 + 大小 + mtime + 原始标签」算出来的 —— 于是本批次自己写一次封面，
+// 就把同专辑所有兄弟轨道的 revision 一起作废，第 2 首起必然 revision_changed
+// （老板 2026-09-28 实测：12 首整轨写入 11/11 全失败，父音频被嵌了 76KB 的 ID3 块）。
+//
+// 这里记住本批次自己写出的最新 revision，后续兄弟轨道直接沿用 —— 自己写的不算
+// 外部改动。批次里的第一条用曲库索引里的当前值（track.Revision）：审核页打开之后
+// 文件可能已经被改过（例如上一次写入嵌了封面），页面里带下来的那份已经过期。
+type cueRevisionTracker struct {
+	latest map[string]string
+}
+
+// base 返回某条轨道本次写入该用的 baseRevision。非整轨原样返回客户端给的值。
+func (t *cueRevisionTracker) base(track domain.Track, clientRevision string) string {
+	parent, ok := cueParentOf(track.RelativePath)
+	if !ok {
+		return clientRevision
+	}
+	if revision, seen := t.latest[parent]; seen {
+		return revision
+	}
+	if track.Revision != "" {
+		return track.Revision
+	}
+	return clientRevision
+}
+
+// record 记住本批次刚写出的 revision。空值忽略，非整轨忽略。
+func (t *cueRevisionTracker) record(relativePath, revision string) {
+	if revision == "" {
+		return
+	}
+	parent, ok := cueParentOf(relativePath)
+	if !ok {
+		return
+	}
+	if t.latest == nil {
+		t.latest = make(map[string]string)
+	}
+	t.latest[parent] = revision
+}
+
+// cueVirtualTrackIDs 从一批 trackID 里挑出整轨 CUE 虚拟轨道。
+func cueVirtualTrackIDs(libraryService *library.Service, trackIDs []string) []string {
+	ids := make([]string, 0, len(trackIDs))
+	for _, trackID := range trackIDs {
+		track, err := libraryService.Track(trackID)
+		if err != nil {
+			continue
+		}
+		if _, ok := cueParentOf(track.RelativePath); ok {
+			ids = append(ids, trackID)
+		}
+	}
+	return ids
+}
+
+// refreshCueVirtualTracks 在写入前重扫批次里的整轨虚拟轨道。
+//
+// 虚拟轨道的 revision 是按父音频（大小 + mtime + 原始标签）算的，而审核页
+// 打开之后父音频很可能已经被改过 —— 最常见的就是上一次写入把封面嵌了进去。
+// 不重扫的话第一条就会 revision_changed，tracker 也就拿不到可用的起点，
+// 整批一起失败（老板 2026-09-28 实测 11/11）。重扫失败不阻断写入：
+// 后续每条写入本来就会给出更具体的错误。
+func refreshCueVirtualTracks(ctx context.Context, libraryService *library.Service, trackIDs []string) {
+	rescanIDs := cueVirtualTrackIDs(libraryService, trackIDs)
+	if len(rescanIDs) == 0 {
+		return
+	}
+	_, _ = libraryService.RescanTracks(ctx, rescanIDs)
+}
+
 func newBatchEditHandler(libraryService *library.Service, tagWriter *filewrite.Writer, dataStore *store.Store) jobs.Handler {
 	return func(ctx context.Context, job domain.Job, progress jobs.Progress) error {
 		var payload domain.BatchEditPayload
 		if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
 			return err
 		}
+		batchTrackIDs := make([]string, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			batchTrackIDs = append(batchTrackIDs, item.TrackID)
+		}
+		refreshCueVirtualTracks(ctx, libraryService, batchTrackIDs)
 		var batchArtwork *artwork.Asset
 		if payload.Artwork != nil && payload.Artwork.Action == domain.BatchArtworkReplace {
 			data, err := base64.StdEncoding.DecodeString(payload.Artwork.Data)
@@ -862,6 +968,7 @@ func newBatchEditHandler(libraryService *library.Service, tagWriter *filewrite.W
 		}, 0, len(payload.Items))
 		succeeded, failed := 0, 0
 		var lastFailure error
+		cueRevisions := &cueRevisionTracker{}
 		for index, item := range payload.Items {
 			track, err := libraryService.Track(item.TrackID)
 			var result filewrite.Result
@@ -876,8 +983,14 @@ func newBatchEditHandler(libraryService *library.Service, tagWriter *filewrite.W
 					if baseRevision == "" {
 						baseRevision = track.Revision
 					}
+					// 同 JobWrite：整轨批次的兄弟轨道共用父音频，本批次自己
+					// 写出的 revision 必须传递下去。
+					baseRevision = cueRevisions.base(track, baseRevision)
 					result, err = tagWriter.Write(ctx, ref, baseRevision, patchFromBatchEdit(track, payload.Operations, payload.SequenceTracks, index, len(payload.Items)), false)
 					tagPhaseCompleted = err == nil
+					if err == nil {
+						cueRevisions.record(track.RelativePath, result.CurrentRevision)
+					}
 					if err == nil && payload.Artwork != nil {
 						var target *artwork.Asset
 						if payload.Artwork.Action == domain.BatchArtworkReplace {
@@ -893,6 +1006,7 @@ func newBatchEditHandler(libraryService *library.Service, tagWriter *filewrite.W
 							result.Warnings = append(result.Warnings, artworkResult.Warnings...)
 							artworkResultCopy := artworkResult
 							completedArtworkResult = &artworkResultCopy
+							cueRevisions.record(track.RelativePath, artworkResult.CurrentRevision)
 						}
 					}
 				}
