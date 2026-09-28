@@ -161,42 +161,74 @@ func (w *Writer) SetRoot(root string) error {
 // directory must allow creating and removing a temporary sibling. Directory
 // probes are deduplicated so a large album batch creates only one short-lived
 // check file per folder.
+//
+// CUE 虚拟轨道（伪路径 <父音频>#cue:N）在磁盘上没有对应文件，必须换成真实
+// 写入目标再探测：父音频（revision 依据）要可读，同目录的 cue 文本文件要可读
+// 且所在目录能建临时副本。漏掉这一步会拿伪路径直接 Lstat —— Windows 因文件名
+// 里的冒号报 "Incorrect function"、Linux 报 ENOENT，把整批整轨全部挡在预检外。
 func (w *Writer) ValidateWritable(refs []library.FileRef) error {
 	checkedDirectories := make(map[string]struct{})
 	for _, ref := range refs {
 		if !ref.Format.IsSupported() {
 			return fmt.Errorf("%w: %s: %w", ErrTargetNotWritable, ref.RelativePath, ErrUnsupportedFormat)
 		}
-		path, err := w.containedPath(ref)
-		if err != nil {
-			return fmt.Errorf("%w: %s: %v", ErrTargetNotWritable, ref.RelativePath, err)
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("%w: %s: cannot read source: %v", ErrTargetNotWritable, ref.RelativePath, err)
-		}
-		if err := file.Close(); err != nil {
-			return fmt.Errorf("%w: %s: close permission probe: %v", ErrTargetNotWritable, ref.RelativePath, err)
-		}
-		directory := filepath.Dir(path)
-		if _, checked := checkedDirectories[directory]; checked {
+		if domain.IsCueVirtualPath(ref.RelativePath) {
+			parent, _, err := w.cueParentRef(ref)
+			if err != nil {
+				return fmt.Errorf("%w: %s: %v", ErrTargetNotWritable, ref.RelativePath, err)
+			}
+			if err := w.validateWritableTarget(ref.RelativePath, parent, checkedDirectories); err != nil {
+				return err
+			}
+			sheet, err := w.cueSheetRef(ref)
+			if err != nil {
+				return fmt.Errorf("%w: %s: %v", ErrTargetNotWritable, ref.RelativePath, err)
+			}
+			if err := w.validateWritableTarget(ref.RelativePath, sheet, checkedDirectories); err != nil {
+				return err
+			}
 			continue
 		}
-		probe, err := os.CreateTemp(directory, ".tagger-write-check-*")
-		if err != nil {
-			return fmt.Errorf("%w: %s: cannot create temporary sibling: %v", ErrTargetNotWritable, ref.RelativePath, err)
+		if err := w.validateWritableTarget(ref.RelativePath, ref, checkedDirectories); err != nil {
+			return err
 		}
-		probePath := probe.Name()
-		closeErr := probe.Close()
-		removeErr := os.Remove(probePath)
-		if closeErr != nil {
-			return fmt.Errorf("%w: %s: close temporary permission probe: %v", ErrTargetNotWritable, ref.RelativePath, closeErr)
-		}
-		if removeErr != nil {
-			return fmt.Errorf("%w: %s: remove temporary permission probe: %v", ErrTargetNotWritable, ref.RelativePath, removeErr)
-		}
-		checkedDirectories[directory] = struct{}{}
 	}
+	return nil
+}
+
+// validateWritableTarget 探测单个真实文件的「可读 + 所在目录可建临时副本」。
+// label 只用于错误信息，取调用方原始的相对路径（虚拟轨道要显示伪路径，
+// 否则用户看到的是父音频名，对不上正在处理的那一轨）。
+func (w *Writer) validateWritableTarget(label string, ref library.FileRef, checkedDirectories map[string]struct{}) error {
+	path, err := w.containedPath(ref)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrTargetNotWritable, label, err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("%w: %s: cannot read source: %v", ErrTargetNotWritable, label, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("%w: %s: close permission probe: %v", ErrTargetNotWritable, label, err)
+	}
+	directory := filepath.Dir(path)
+	if _, checked := checkedDirectories[directory]; checked {
+		return nil
+	}
+	probe, err := os.CreateTemp(directory, ".tagger-write-check-*")
+	if err != nil {
+		return fmt.Errorf("%w: %s: cannot create temporary sibling: %v", ErrTargetNotWritable, label, err)
+	}
+	probePath := probe.Name()
+	closeErr := probe.Close()
+	removeErr := os.Remove(probePath)
+	if closeErr != nil {
+		return fmt.Errorf("%w: %s: close temporary permission probe: %v", ErrTargetNotWritable, label, closeErr)
+	}
+	if removeErr != nil {
+		return fmt.Errorf("%w: %s: remove temporary permission probe: %v", ErrTargetNotWritable, label, removeErr)
+	}
+	checkedDirectories[directory] = struct{}{}
 	return nil
 }
 

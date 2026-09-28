@@ -433,6 +433,57 @@ func TestWriterWritesCueVirtualTrackSidecarUnderLibraryRoot(t *testing.T) {
 	}
 }
 
+// 回归：写入预检必须能解析 cue 虚拟轨道。虚拟轨道的 RelativePath 是伪路径
+// <父音频>#cue:N，磁盘上没有这个文件；旧实现直接拿它做 containedPath，于是
+// Windows 在文件名里的冒号上报 "Incorrect function"、Linux 报 ENOENT，整批
+// 整轨被预检全数挡下（老板 2026-09-28 实测：点「确认并创建写入任务」出红字）。
+func TestWriterValidateWritableResolvesCueVirtualTrack(t *testing.T) {
+	root := t.TempDir()
+	audioPath := filepath.Join(root, "album.wav")
+	if err := os.WriteFile(audioPath, []byte("fake wav bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cuePath := filepath.Join(root, "album.cue")
+	cueBody := "PERFORMER \"A\"\nTITLE \"Album\"\nFILE \"album.wav\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n"
+	if err := os.WriteFile(cuePath, []byte(cueBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := New(root, newMemoryEngine(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	virtual := domain.CueVirtualPath("album.wav", 1)
+	ref := library.FileRef{
+		ID:           "trk-cue-1",
+		RelativePath: virtual,
+		// 与 library.Service.FileRef 一致：伪路径原样拼进绝对路径。
+		AbsolutePath: filepath.Join(root, filepath.FromSlash(virtual)),
+		Format:       domain.FormatWAV,
+	}
+
+	if err := writer.ValidateWritable([]library.FileRef{ref}); err != nil {
+		t.Fatalf("cue virtual track preflight must pass: %v", err)
+	}
+	// 同批混入普通曲目也不能被虚拟轨道带偏。
+	plainPath := filepath.Join(root, "song.flac")
+	if err := os.WriteFile(plainPath, []byte("fake flac"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	plain := testFileRef(t, root, plainPath, domain.FormatFLAC, writer.engine)
+	if err := writer.ValidateWritable([]library.FileRef{ref, plain}); err != nil {
+		t.Fatalf("mixed batch preflight must pass: %v", err)
+	}
+
+	// cue 文件缺失时仍要拦下：那才是真正会被改写的目标文件。
+	if err := os.Remove(cuePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.ValidateWritable([]library.FileRef{ref}); !errors.Is(err, ErrTargetNotWritable) {
+		t.Fatalf("missing cue sheet preflight error = %v, want ErrTargetNotWritable", err)
+	}
+}
+
 func TestWriterRestoresManagedSnapshotAndPreservesPrivateTags(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "song.flac")
