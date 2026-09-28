@@ -365,6 +365,12 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
   const hasQueueFilter = Boolean(query.trim()) || statusFilter !== 'all' || sourceFilter !== 'all';
   const active = visibleItems.find(({track}) => track.id === activeId) ?? visibleItems[0] ?? (hasQueueFilter ? undefined : items[0]);
   const accepted = items.filter((item) => item.state === 'accepted').length;
+  // ★「接受所有自动推荐」的作用范围：有候选、且尚未接受 / 未跳过。
+  // 这里刻意不用 candidate.autoAccept 当判据 —— 它要求「≥2 个独立来源 + 领先第二名
+  // 0.08 分 + 无冲突」，中文老歌基本达不到；而后端在抓取阶段已经把满足该条件的曲目
+  // 预先标成「已接受」。于是旧实现筛出来的集合永远是空的，按钮点下去毫无反应
+  // （老板 2026-09-28 反馈：只能回右上角一首一首点「接受候选」）。
+  const pendingRecommendations = items.filter((item) => Boolean(item.candidate) && item.state !== 'accepted' && item.state !== 'skipped');
   // 已接受且属于整轨 CUE 虚拟轨道的曲目：不勾 .lrc 则其歌词只进曲库索引，完整重扫会丢
   const acceptedCueTracks = items.filter((item) => item.state === 'accepted' && item.candidate && item.track.cuePath).length;
   const needsReview = items.filter((item) => item.state === 'review').length;
@@ -513,6 +519,21 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
     moveToNext(active.track.id);
   };
 
+  // 一键接受本批所有「有候选但还没接受」的曲目，等价于逐首点「接受候选」。
+  const acceptAllRecommendations = () => {
+    if (pendingRecommendations.length === 0) return;
+    const targets = pendingRecommendations.map((item) => ({
+      trackId: item.track.id,
+      candidateId: item.candidate!.id,
+      fields: item.fields,
+      artwork: item.includeArtwork,
+      artworkMaxSize: item.includeArtwork ? item.artworkMaxSize : 0,
+    }));
+    const acceptedIDs = new Set(targets.map((target) => target.trackId));
+    setItems((current) => current.map((item) => acceptedIDs.has(item.track.id) ? {...item, state: 'accepted' as const} : item));
+    targets.forEach((target) => persistReviewState(target.trackId, 'accepted', target.candidateId, target.fields, target.artwork, target.artworkMaxSize));
+  };
+
   const confirmWrite = async () => {
     if (accepted === 0 || applying) return;
     setApplying(true);
@@ -617,13 +638,10 @@ export function ReviewPage({trackIds, matchJobId, showGeneratedCovers = false, o
         <div className="review-toolbar-actions">
 	          <button
 	            className="secondary-button"
-	            onClick={() => {
-	              const highConfidence = items.filter((item) => item.candidate?.autoAccept);
-	              setItems((current) => current.map((item) => item.candidate?.autoAccept ? {...item, state: 'accepted'} : item));
-	              highConfidence.forEach((item) => persistReviewState(item.track.id, 'accepted', item.candidate?.id, item.fields, item.includeArtwork, item.includeArtwork ? item.artworkMaxSize : 0));
-	            }}
+	            disabled={pendingRecommendations.length === 0}
+	            onClick={acceptAllRecommendations}
 	          >
-	            <Check size={15} /> 接受所有自动推荐
+	            <Check size={15} /> 接受所有自动推荐{pendingRecommendations.length > 0 ? `（${pendingRecommendations.length}）` : ''}
           </button>
           <button className="secondary-button" onClick={onBack} disabled={applying}>保存草稿并返回</button>
           <label className="review-lrc-option">
