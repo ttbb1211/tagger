@@ -823,20 +823,34 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
     }
   };
 
-		const applyCandidate = async (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean}) => {
+		const applyCandidate = async (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean; writeTag?: boolean; includeLyrics?: boolean}) => {
 		  if (!activeTrack) return;
 		  if (!activeTrackIndexed) {
 			onNotice('当前文件仍在索引，完成后才能应用候选资料');
 			return;
 		  }
+	  const exportLrc = options.exportLrc ?? false;
+	  const writeTag = options.writeTag ?? true;
+	  const includeLyrics = options.includeLyrics ?? true;
+	  if (!writeTag && !exportLrc) {
+		onNotice('未选择任何写入方式，文件未修改');
+		return;
+	  }
 	  setSaving(true);
 	  let tagsApplied = false;
-	  const exportLrc = options.exportLrc ?? false;
 	  try {
-		const writeResult = await updateTrackWithWarnings(activeTrack.id, patch, {providerId: candidate.providerId});
-		let updated = writeResult.track;
-		tagsApplied = true;
-		updateTrackState(updated);
+		let updated = activeTrack;
+		let warnings: string[] = [];
+		if (writeTag) {
+		  // 没勾「写入歌词」时把歌词从标签里摘掉：patch 里带歌词只是为了给 .lrc 用，
+		  // 不能顺手内嵌进音频、也不能写进 cue。用户说「只搜刮歌词」就真的只落 .lrc。
+		  const tagPatch = includeLyrics ? patch : {...patch, lyrics: activeTrack.lyrics};
+		  const writeResult = await updateTrackWithWarnings(activeTrack.id, tagPatch, {providerId: candidate.providerId});
+		  updated = writeResult.track;
+		  warnings = writeResult.warnings;
+		  tagsApplied = true;
+		  updateTrackState(updated);
+		}
 		if (options.artwork) {
 			  updated = await applyCandidateArtwork(updated.id, candidate.artworkRefId || candidate.id, options.artworkMaxSize ?? 0);
 		  updateTrackState(updated);
@@ -860,12 +874,14 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		// 后端字段级告警必须露出来：整轨虚拟轨道写歌词会返回
 		// 「CUE 不支持字段 lyrics，仅保存到曲库索引，未写入 cue 文件」——
 		// 不显示的话用户只看到「已写入」，实际歌词根本没落盘。
-		const warnNote = writeResult.warnings.length > 0 ? `。注意：${writeResult.warnings.join('；')}` : '';
-		const cueUnpersisted = Boolean(activeTrack.cuePath) && !exportLrc && (patch.lyrics ?? '').trim() !== '';
+		const warnNote = warnings.length > 0 ? `。注意：${warnings.join('；')}` : '';
+		const cueUnpersisted = Boolean(activeTrack.cuePath) && includeLyrics && !exportLrc && (patch.lyrics ?? '').trim() !== '';
 		const summary = cueUnpersisted
 		  ? '整轨虚拟轨道的歌词未导出 .lrc，只保留在曲库索引中（完整重扫会丢失）'
-		  : `已采用 ${candidate.providerName} 候选并安全写入${options.artwork ? '标签与封面' : '音乐标签'}${lrcNote}`;
-		onNotice(`${tagWriteNotice(updated, summary)}${warnNote}`);
+		  : writeTag
+			? `已采用 ${candidate.providerName} 候选并安全写入${options.artwork ? '标签与封面' : '音乐标签'}${lrcNote}`
+			: `已采用 ${candidate.providerName} 候选歌词，未改动文件标签${lrcNote}`;
+		onNotice(writeTag ? `${tagWriteNotice(updated, summary)}${warnNote}` : `${summary}${warnNote}`);
 	  } catch (error) {
 		const message = error instanceof Error ? error.message : '候选资料应用失败';
 		onNotice(tagsApplied && options.artwork ? `标签已写入，但候选封面应用失败：${message}` : message);

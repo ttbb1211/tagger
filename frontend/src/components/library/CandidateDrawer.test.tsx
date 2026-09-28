@@ -95,7 +95,7 @@ it('passes an explicit artwork choice without exposing the remote URL', async ()
   await user.selectOptions(screen.getByRole('combobox', {name: '封面写入尺寸'}), '500');
   await user.click(screen.getByRole('button', {name: '采用所选资料'}));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
-  expect(onApply.mock.calls[0][2]).toEqual({artwork: true, exportLrc: false, artworkMaxSize: 500});
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: true, exportLrc: false, includeLyrics: false, writeTag: true, artworkMaxSize: 500});
 });
 
 it('leaves .lrc export optional and passes it through when the user opts in', async () => {
@@ -119,7 +119,7 @@ it('leaves .lrc export optional and passes it through when the user opts in', as
   await user.click(lrc);
   await user.click(screen.getByRole('button', {name: '采用所选资料'}));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
-  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true});
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true, includeLyrics: false, writeTag: true});
 });
 
 it('explains that cue virtual tracks cannot embed lyrics and keeps .lrc optional', async () => {
@@ -143,7 +143,7 @@ it('explains that cue virtual tracks cannot embed lyrics and keeps .lrc optional
   expect(screen.getByText(/整轨虚拟轨道只能存为/)).toBeInTheDocument();
 });
 
-it('carries the candidate lyrics into the patch when .lrc export is ticked on a cue virtual track', async () => {
+it('keeps the cue tag unticked when .lrc export is ticked on a cue virtual track', async () => {
   const user = userEvent.setup();
   const onApply = vi.fn().mockResolvedValue(undefined);
   const cueTrack: Track = {...track, cuePath: 'album.cue', startOffsetSeconds: 0, endOffsetSeconds: 120, lyrics: ''};
@@ -153,6 +153,7 @@ it('carries the candidate lyrics into the patch when .lrc export is ticked on a 
       track={cueTrack}
       candidates={[candidate]}
       loading={false}
+      focus="lyrics"
       onClose={() => undefined}
       onApply={onApply}
     />,
@@ -163,13 +164,59 @@ it('carries the candidate lyrics into the patch when .lrc export is ticked on a 
   expect(writeCue).not.toBeChecked();
 
   await user.click(lrc);
-  // 勾选导出时必须自动带上候选歌词，否则导出的是文件里的空歌词、不会生成 .lrc
-  expect(writeCue).toBeChecked();
+  // 用户明确取消过「写入 cue 标签」，勾「导出 .lrc」不能把它改回去 —— 只落 .lrc，不碰 cue。
+  expect(writeCue).not.toBeChecked();
 
   await user.click(screen.getByRole('button', {name: '采用所选资料'}));
   await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  // 歌词仍要带进 patch，否则导出的是文件里的空歌词、不会生成 .lrc
   expect(onApply.mock.calls[0][0].lyrics).toBe('[00:01.00]new lyrics');
-  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true});
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true, includeLyrics: false, writeTag: false});
+});
+
+it('exports only the .lrc for a plain track without writing its audio tags', async () => {
+  const user = userEvent.setup();
+  const onApply = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CandidateDrawer
+      open
+      track={track}
+      candidates={[candidate]}
+      loading={false}
+      focus="lyrics"
+      onClose={() => undefined}
+      onApply={onApply}
+    />,
+  );
+
+  expect(screen.getByRole('checkbox', {name: /^同时写入歌词/})).not.toBeChecked();
+  await user.click(screen.getByRole('checkbox', {name: /^同时导出 \.lrc 歌词文件/}));
+  await user.click(screen.getByRole('button', {name: '采用所选资料'}));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(onApply.mock.calls[0][0].lyrics).toBe('[00:01.00]new lyrics');
+  // writeTag=false：只写 .lrc，不内嵌歌词、也不动元数据
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true, includeLyrics: false, writeTag: false});
+});
+
+it('still writes the lyrics into the tag when the user ticks the lyrics checkbox', async () => {
+  const user = userEvent.setup();
+  const onApply = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CandidateDrawer
+      open
+      track={track}
+      candidates={[candidate]}
+      loading={false}
+      focus="lyrics"
+      onClose={() => undefined}
+      onApply={onApply}
+    />,
+  );
+
+  await user.click(screen.getByRole('checkbox', {name: /^同时写入歌词/}));
+  await user.click(screen.getByRole('button', {name: '采用所选资料'}));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: false, includeLyrics: true, writeTag: true});
 });
 
 it('toggles all available metadata fields off when the select-all control is clicked again', async () => {
@@ -194,7 +241,7 @@ it('toggles all available metadata fields off when the select-all control is cli
   expect(screen.getByText(/采用 2 组字段/)).toBeInTheDocument();
 });
 
-it('focuses the lyrics asset when opened from the lyrics inspector tab', () => {
+it('opens a lyrics-only lookup with nothing pre-selected so nothing but lyrics is scraped', () => {
   render(
     <CandidateDrawer
       open
@@ -207,7 +254,9 @@ it('focuses the lyrics asset when opened from the lyrics inspector tab', () => {
     />,
   );
 
-  expect(screen.getByRole('checkbox', {name: /^同时写入歌词/})).toBeChecked();
+  // 「写入歌词」默认不勾，元数据字段也一个都不预选 —— 只搜刮歌词，其他一概不搜刮
+  expect(screen.getByRole('checkbox', {name: /^同时写入歌词/})).not.toBeChecked();
+  expect(screen.getByText(/采用 0 组字段/)).toBeInTheDocument();
 });
 
 it('allows the source query to be edited before searching again', async () => {

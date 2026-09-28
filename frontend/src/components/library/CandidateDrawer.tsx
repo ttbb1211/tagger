@@ -26,7 +26,7 @@ interface CandidateDrawerProps {
   showGeneratedCovers?: boolean;
   onSearchQuery?: (query: CandidateSearchQuery) => Promise<void>;
   onClose: () => void;
-  onApply: (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean}) => Promise<void>;
+  onApply: (patch: TrackPatch, candidate: MatchCandidate, options: {artwork: boolean; artworkMaxSize?: number; exportLrc?: boolean; writeTag?: boolean; includeLyrics?: boolean}) => Promise<void>;
 }
 
 function suspiciousAlbumArtist(candidate: MatchCandidate): boolean {
@@ -325,7 +325,9 @@ export function CandidateDrawer({
   useEffect(() => {
 	const first = recommendedCandidate(candidates);
 	setSelectedId(first?.id ?? null);
-    setIncludeLyrics(focus === 'lyrics' && Boolean(first?.hasLyrics && first.lyrics?.value));
+    // 「写入 cue 标签 / 同时写入歌词」一律不预勾：要不要把歌词落进标签由用户自己决定，
+    // 从「查找歌词」进来也一样（历史上这里会替用户勾上，等于替他做了决定）。
+    setIncludeLyrics(false);
     setExportLrc(false);
     setLyricsDraft(first?.lyrics?.value ?? '');
     setSelectedArtworkInfo(undefined);
@@ -390,8 +392,10 @@ export function CandidateDrawer({
 
   useEffect(() => {
     if (!selected) return;
-    setFields(defaultCandidateFields(selected));
-    setIncludeLyrics(focus === 'lyrics' && Boolean(selected.hasLyrics && selected.lyrics?.value));
+    // 从「查找歌词」进来的只想要歌词：元数据字段一个都不预选，避免顺带把
+    // 标题 / 艺术家 / 专辑刮下来覆盖现有文件（「其他一概不搜刮」）。
+    setFields(focus === 'lyrics' ? new Set<FieldID>() : defaultCandidateFields(selected));
+    setIncludeLyrics(false);
     setExportLrc(false);
     setLyricsDraft(selected.lyrics?.value ?? '');
     setSelectedArtworkInfo(undefined);
@@ -417,10 +421,10 @@ export function CandidateDrawer({
       discTotal: track.discTotal,
       year: track.year,
       genres: [...track.genres],
-      // 整轨 CUE 虚拟轨道无法内嵌歌词，.lrc 是唯一能真正落盘的途径：
-      // 勾选「导出 .lrc」时必须把编辑器里的歌词带进 patch，否则带过去的是
-      // 文件里原有的（通常为空）歌词，用户会看到提示却没有生成文件。
-      lyrics: includeLyrics || (exportLrc && cueVirtual) ? lyricsDraft : track.lyrics,
+      // 勾了「写入标签」或「导出 .lrc」都说明用户要保存这版歌词，patch 必须带上
+      // 编辑器里的内容；否则带过去的是文件里原有的（通常为空）歌词，用户会看到
+      // 提示却没有生成文件。两者都不勾则原样保留，不动文件里的歌词。
+      lyrics: includeLyrics || exportLrc ? lyricsDraft : track.lyrics,
       comment: track.comment,
       composers: [...track.composers],
       conductor: track.conductor,
@@ -650,8 +654,10 @@ export function CandidateDrawer({
                       spellCheck={false}
                     />
                     <small>
-                      可以修正错字、时间轴或补充内容；勾选下方“{cueVirtual ? '写入 cue 标签' : '同时写入歌词'}”后才会保存
-                      {cueVirtual ? '（整轨歌词请勾选“导出 .lrc 歌词文件”，会自动带上“写入 cue 标签”）' : '到音频文件'}。
+                      可以修正错字、时间轴或补充内容。要保存请勾选下方任一项：
+                      {cueVirtual
+                        ? '“导出 .lrc 歌词文件”（整轨唯一能落盘的方式）或“写入 cue 标签”。'
+                        : '“同时写入歌词”（写进音频标签）或“同时导出 .lrc 歌词文件”（只存独立文件，不改音频）。'}
                     </small>
                   </div>
                 )}
@@ -690,16 +696,7 @@ export function CandidateDrawer({
                     <input
                       type="checkbox"
                       checked={exportLrc}
-                      onChange={(event) => {
-                        const next = event.target.checked;
-                        setExportLrc(next);
-                        // 整轨虚拟轨道的歌词只能靠 .lrc 落盘。用户勾选「导出」即表达了
-                        // 要保存歌词的意图，这里同步带上候选歌词，避免「只勾导出」却因
-                        // 歌词没入选而空跑；仍可手动取消。
-                        if (next && cueVirtual && selected?.hasLyrics && selected.lyrics?.value) {
-                          setIncludeLyrics(true);
-                        }
-                      }}
+                      onChange={(event) => setExportLrc(event.target.checked)}
                     />
                     <FileText size={16} />
                     <span>
@@ -737,7 +734,15 @@ export function CandidateDrawer({
                 if (!selected) return;
                 setApplying(true);
                 try {
-                  await onApply(buildPatch(), selected, {artwork: includeArtwork, exportLrc, ...(includeArtwork && artworkMaxSize > 0 ? {artworkMaxSize} : {})});
+                  // writeTag 只由「选了元数据字段」或「勾了写入歌词」决定：都没选就只走
+                  // .lrc 落盘，绝不顺手把标签（含歌词）写进文件。
+                  await onApply(buildPatch(), selected, {
+                    artwork: includeArtwork,
+                    exportLrc,
+                    includeLyrics,
+                    writeTag: fields.size > 0 || includeLyrics,
+                    ...(includeArtwork && artworkMaxSize > 0 ? {artworkMaxSize} : {}),
+                  });
                   onClose();
                 } finally {
                   setApplying(false);
