@@ -331,4 +331,55 @@ describe('SettingsPage provider diagnostics', () => {
     await user.click(screen.getByRole('button', {name: '清理运行缓存'}));
     await waitFor(() => expect(api.clearRuntimeCache).toHaveBeenCalledTimes(1));
   });
+
+  it('turns on 自动转为简体 for every source that exposes the toggle in one click', async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    const simplifyField = {key: 'simplifyChinese', label: '自动转为简体', type: 'boolean' as const, value: 'false'};
+    const appleProvider: ProviderConfig = {...provider, id: 'apple', name: 'Apple / iTunes', config: [...(provider.config ?? []), simplifyField]};
+    const lrclibProvider: ProviderConfig = {...provider, id: 'lrclib', name: 'LRCLIB', config: [simplifyField]};
+    const neteaseProvider: ProviderConfig = {...provider, id: 'netease', name: '网易云音乐', enabled: false, config: [simplifyField]};
+    api.listProviders.mockResolvedValueOnce([appleProvider, lrclibProvider, neteaseProvider]);
+    render(<SettingsPage onNotice={onNotice} showGeneratedCovers={false} onShowGeneratedCoversChange={vi.fn()} />);
+    await openProviderTab(user);
+
+    await user.click(screen.getByRole('button', {name: /全部开启「自动转为简体」/}));
+
+    await waitFor(() => expect(api.updateProvider).toHaveBeenCalledTimes(3));
+    // 停用的数据源也要覆盖，否则启用后仍然是繁体原文。
+    expect(api.updateProvider).toHaveBeenCalledWith(appleProvider, true, {simplifyChinese: 'true'});
+    expect(api.updateProvider).toHaveBeenCalledWith(lrclibProvider, true, {simplifyChinese: 'true'});
+    expect(api.updateProvider).toHaveBeenCalledWith(neteaseProvider, false, {simplifyChinese: 'true'});
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith('已为 3 个数据源开启「自动转为简体」'));
+  });
+
+  it('reports partial failures instead of silently keeping stale sources', async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    const simplifyField = {key: 'simplifyChinese', label: '自动转为简体', type: 'boolean' as const, value: 'false'};
+    const appleProvider: ProviderConfig = {...provider, id: 'apple', name: 'Apple / iTunes', config: [simplifyField]};
+    const lrclibProvider: ProviderConfig = {...provider, id: 'lrclib', name: 'LRCLIB', config: [simplifyField]};
+    api.listProviders.mockResolvedValueOnce([appleProvider, lrclibProvider]);
+    api.updateProvider.mockImplementation((item: ProviderConfig, enabled: boolean, config?: Record<string, string>) => item.id === 'lrclib'
+      ? Promise.reject(new Error('数据源配置保存失败'))
+      : Promise.resolve({...item, enabled, config: config ? item.config?.map((field) => ({...field, value: config[field.key] ?? field.value})) : item.config}));
+    render(<SettingsPage onNotice={onNotice} showGeneratedCovers={false} onShowGeneratedCoversChange={vi.fn()} />);
+    await openProviderTab(user);
+
+    await user.click(screen.getByRole('button', {name: /全部开启「自动转为简体」/}));
+
+    await waitFor(() => expect(onNotice).toHaveBeenCalledWith('已开启 1 个，1 个失败，请重试'));
+  });
+
+  it('does nothing when no source exposes the 自动转为简体 toggle', async () => {
+    const user = userEvent.setup();
+    const onNotice = vi.fn();
+    render(<SettingsPage onNotice={onNotice} showGeneratedCovers={false} onShowGeneratedCoversChange={vi.fn()} />);
+    await openProviderTab(user);
+
+    await user.click(screen.getByRole('button', {name: /全部开启「自动转为简体」/}));
+
+    expect(api.updateProvider).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledWith('没有可配置「自动转为简体」的数据源');
+  });
 });

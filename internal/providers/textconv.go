@@ -8,14 +8,21 @@ import (
 	"github.com/ericwyn/tagger/internal/textconv"
 )
 
+// SimplifyChineseDefault is the factory default for the shared
+// 「自动转为简体」 toggle. Every built-in source ships with it enabled so
+// traditional-Chinese metadata and lyrics are normalised without any setup.
+// Unchecking the box keeps whatever text the source returned, which is often
+// traditional Chinese. New() and ResetConfig() must both use this constant so
+// the initial state and 「恢复默认配置」 stay in sync.
+const SimplifyChineseDefault = true
+
 // SimplifyChineseConfigField describes the optional provider-level text
-// transform shared by built-in sources. It is disabled by default so existing
-// provider output remains unchanged until a user opts in.
+// transform shared by built-in sources.
 func SimplifyChineseConfigField(enabled bool) ConfigField {
 	return ConfigField{
 		Key: "simplifyChinese", Label: "自动转为简体", Type: "boolean",
 		Value:       strconv.FormatBool(enabled),
-		Description: "将该数据源返回的标题、歌手、专辑、流派和歌词等文本转换为简体中文",
+		Description: "将该数据源返回的标题、歌手、专辑、流派和歌词等文本转换为简体中文；不勾选则保留数据源原文（繁体中文）",
 	}
 }
 

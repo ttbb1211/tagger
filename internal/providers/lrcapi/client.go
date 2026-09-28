@@ -55,6 +55,7 @@ func New(config Config) *Client {
 	if config.RateInterval == 0 {
 		config.RateInterval = 500 * time.Millisecond
 	}
+	config.SimplifyChinese = providers.SimplifyChineseDefault
 	gate := providers.NewGate(config.RateInterval)
 	return &Client{
 		baseURL: config.BaseURL, coverURL: config.CoverURL, auth: strings.TrimSpace(config.Auth),
@@ -72,7 +73,7 @@ func (c *Client) ResetConfig() error {
 	c.coverURL = "https://api.lrc.cx/cover"
 	c.auth = ""
 	c.userAgent = providers.DefaultUserAgent("lrcapi")
-	c.simplifyChinese = false
+	c.simplifyChinese = providers.SimplifyChineseDefault
 	c.gate.SetInterval(500 * time.Millisecond)
 	return c.setProxyLocked("")
 }

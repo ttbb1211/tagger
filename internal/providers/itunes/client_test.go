@@ -110,7 +110,7 @@ func TestAppleSimplifyConfigRoundTrips(t *testing.T) {
 	if err := client.ResetConfig(); err != nil {
 		t.Fatal(err)
 	}
-	if client.CacheVariant() != "baseUrl=https://itunes.apple.com/search;country=HK;simplifyChinese=false" {
+	if client.CacheVariant() != "baseUrl=https://itunes.apple.com/search;country=HK;simplifyChinese=true" {
 		t.Fatalf("reset CacheVariant() = %q", client.CacheVariant())
 	}
 }

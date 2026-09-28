@@ -48,6 +48,7 @@ func New(config Config) *Client {
 	if config.RateInterval == 0 {
 		config.RateInterval = 3 * time.Second
 	}
+	config.SimplifyChinese = providers.SimplifyChineseDefault
 	gate := providers.NewGate(config.RateInterval)
 	return &Client{
 		baseURL: config.BaseURL, country: config.Country, userAgent: config.UserAgent,
@@ -64,7 +65,7 @@ func (c *Client) ResetConfig() error {
 	c.baseURL = "https://itunes.apple.com/search"
 	c.country = "HK"
 	c.userAgent = providers.DefaultUserAgent("apple")
-	c.simplifyChinese = false
+	c.simplifyChinese = providers.SimplifyChineseDefault
 	c.gate.SetInterval(3 * time.Second)
 	return c.setProxyLocked("")
 }

@@ -47,16 +47,19 @@ func TestBuiltInProvidersExposeProxyForAPIAndArtwork(t *testing.T) {
 					break
 				}
 			}
-			if simplifyField.Type != "boolean" || simplifyField.Value != "false" {
+			if simplifyField.Type != "boolean" || simplifyField.Value != "true" {
 				t.Fatalf("default simplify field = %#v", simplifyField)
 			}
-			if err := configurable.Configure(map[string]string{"simplifyChinese": "true"}); err != nil {
+			if err := configurable.Configure(map[string]string{"simplifyChinese": "false"}); err != nil {
 				t.Fatal(err)
 			}
 			for _, field := range configurable.ConfigFields() {
-				if field.Key == "simplifyChinese" && field.Value != "true" {
+				if field.Key == "simplifyChinese" && field.Value != "false" {
 					t.Fatalf("configured simplify field = %#v", field)
 				}
+			}
+			if err := configurable.Configure(map[string]string{"simplifyChinese": "true"}); err != nil {
+				t.Fatal(err)
 			}
 			if err := configurable.Configure(map[string]string{"proxyUrl": "http://127.0.0.1:7890/"}); err != nil {
 				t.Fatal(err)
@@ -80,7 +83,7 @@ func TestBuiltInProvidersExposeProxyForAPIAndArtwork(t *testing.T) {
 				t.Fatalf("reset artwork options = %#v", reset)
 			}
 			for _, field := range configurable.ConfigFields() {
-				if field.Key == "simplifyChinese" && field.Value != "false" {
+				if field.Key == "simplifyChinese" && field.Value != "true" {
 					t.Fatalf("reset simplify field = %#v", field)
 				}
 			}

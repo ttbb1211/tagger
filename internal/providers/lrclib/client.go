@@ -51,6 +51,7 @@ func New(config Config) *Client {
 	if config.RateInterval == 0 {
 		config.RateInterval = 300 * time.Millisecond
 	}
+	config.SimplifyChinese = providers.SimplifyChineseDefault
 	gate := providers.NewGate(config.RateInterval)
 	return &Client{
 		baseURL: config.BaseURL, searchURL: config.SearchURL, userAgent: config.UserAgent,
@@ -67,7 +68,7 @@ func (c *Client) ResetConfig() error {
 	c.baseURL = "https://lrclib.net/api/get"
 	c.searchURL = "https://lrclib.net/api/search"
 	c.userAgent = providers.DefaultUserAgent("lrclib")
-	c.simplifyChinese = false
+	c.simplifyChinese = providers.SimplifyChineseDefault
 	c.gate.SetInterval(300 * time.Millisecond)
 	return c.setProxyLocked("")
 }

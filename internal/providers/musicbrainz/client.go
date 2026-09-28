@@ -50,6 +50,7 @@ func New(config Config) *Client {
 	if config.RateInterval == 0 {
 		config.RateInterval = time.Second
 	}
+	config.SimplifyChinese = providers.SimplifyChineseDefault
 	gate := providers.NewGate(config.RateInterval)
 	return &Client{
 		baseURL: config.BaseURL, archiveDownloadBaseURL: config.ArchiveDownloadBaseURL,
@@ -66,7 +67,7 @@ func (c *Client) ResetConfig() error {
 	c.baseURL = "https://musicbrainz.org/ws/2/recording/"
 	c.archiveDownloadBaseURL = providers.DefaultArchiveDownloadBaseURL
 	c.userAgent = providers.DefaultUserAgent("musicbrainz")
-	c.simplifyChinese = false
+	c.simplifyChinese = providers.SimplifyChineseDefault
 	c.gate.SetInterval(time.Second)
 	return c.setProxyLocked("")
 }

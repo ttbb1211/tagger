@@ -132,6 +132,7 @@ export function SettingsPage({onNotice, showGeneratedCovers, onShowGeneratedCove
   const [writeHistory, setWriteHistory] = useState(true);
   const [batchTrackLimit, setBatchTrackLimit] = useState(defaultBatchTrackLimit);
   const [batchTrackLimitSaving, setBatchTrackLimitSaving] = useState(false);
+  const [simplifyingAll, setSimplifyingAll] = useState(false);
   const [cacheClearing, setCacheClearing] = useState(false);
 
   useEffect(() => {
@@ -379,6 +380,28 @@ export function SettingsPage({onNotice, showGeneratedCovers, onShowGeneratedCove
       onNotice(`${updated.name} 已${updated.enabled ? '启用' : '停用'}并持久化`);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '数据源设置保存失败');
+    }
+  };
+
+  // 一键把所有数据源的「自动转为简体」打开。代码里的出厂默认只对从没保存过
+  // 该来源配置的机器生效；这里显式覆盖已持久化的值，省去逐个打开配置弹窗。
+  const enableSimplifyAll = async () => {
+    const targets = providers.filter((provider) => provider.config?.some((field) => field.key === 'simplifyChinese'));
+    if (targets.length === 0) {
+      onNotice('没有可配置「自动转为简体」的数据源');
+      return;
+    }
+    setSimplifyingAll(true);
+    try {
+      const results = await Promise.allSettled(targets.map((provider) => updateProvider(provider, provider.enabled, {simplifyChinese: 'true'})));
+      const applied = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+      setProviders((current) => current.map((item) => applied.find((entry) => entry.id === item.id) ?? item));
+      const failed = results.length - applied.length;
+      onNotice(failed === 0
+        ? `已为 ${applied.length} 个数据源开启「自动转为简体」`
+        : `已开启 ${applied.length} 个，${failed} 个失败，请重试`);
+    } finally {
+      setSimplifyingAll(false);
     }
   };
 
@@ -674,7 +697,13 @@ export function SettingsPage({onNotice, showGeneratedCovers, onShowGeneratedCove
             <>
               <div className="settings-content-head">
                 <div><h2>音乐数据源</h2><p>数据源按能力组合；单个来源失败不会影响其他结果。</p></div>
-                <span className="settings-readonly-hint">内置策略可配置；自定义策略将在后续版本开放</span>
+                <div className="settings-head-actions">
+                  <button className="secondary-button" disabled={simplifyingAll} onClick={() => void enableSimplifyAll()}>
+                    {simplifyingAll ? <LoaderCircle size={14} className="spin" /> : <Type size={14} />}
+                    全部开启「自动转为简体」
+                  </button>
+                  <span className="settings-readonly-hint">内置策略可配置；自定义策略将在后续版本开放</span>
+                </div>
               </div>
               <div className="provider-grid">
                 {providers.map((provider) => (

@@ -62,6 +62,7 @@ func New(config Config) *Client {
 	if config.RateInterval == 0 {
 		config.RateInterval = 180 * time.Millisecond
 	}
+	config.SimplifyChinese = providers.SimplifyChineseDefault
 	gate := providers.NewGate(config.RateInterval)
 	return &Client{config: config, baseHTTP: config.Client, http: providers.WrapHTTPClient(config.Client, gate), gate: gate}
 }
@@ -78,7 +79,7 @@ func (c *Client) ResetConfig() error {
 	c.config.UserAgent = providers.DefaultUserAgent("kugou")
 	c.config.Auth = ""
 	c.config.Cookie = ""
-	c.config.SimplifyChinese = false
+	c.config.SimplifyChinese = providers.SimplifyChineseDefault
 	c.gate.SetInterval(180 * time.Millisecond)
 	return c.setProxyLocked("")
 }

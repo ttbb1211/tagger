@@ -6063,6 +6063,12 @@ button:disabled {
   font-size: 11px;
 }
 
+.settings-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(280px, 1fr));
