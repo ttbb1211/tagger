@@ -117,8 +117,9 @@ func (e *cueArtworkEngine) WriteArtwork(_ context.Context, path string, _ int, d
 // 被嵌了 76KB 的 ID3 块。
 //
 // 现在规则是：整轨只写 cue 与 .lrc，父音频一个字节都不动。这个用例同时守住
-// 两件事 —— ① 批次照旧全部成功；② 谁再把封面塞回父音频，文件就会变大，用例
-// 立刻红。
+// 三件事 —— ① 批次照旧全部成功（含审核页带下来的过期 revision）；② 父音频
+// size/mtime 不变、引擎一次都没被要求写封面；③ cue 照旧被两条轨道写入。
+// 谁再把封面塞回父音频，文件就会变大，用例立刻红。
 func TestBatchEditSkipsCueArtworkAndKeepsParentUntouched(t *testing.T) {
 	root := t.TempDir()
 	audioPath := filepath.Join(root, "album.wav")
@@ -165,10 +166,12 @@ func TestBatchEditSkipsCueArtworkAndKeepsParentUntouched(t *testing.T) {
 	if len(virtual) != 2 {
 		t.Fatalf("cue virtual tracks = %d, want 2", len(virtual))
 	}
-	// 与前端一致：BaseRevision 取自审核页打开时那份曲库索引。
+	// ★ 故意塞一个必然对不上的 baseRevision，复刻老板的实际场景：审核页打开那一刻
+	// 的曲库索引值，在点「确认并创建写入任务」时早就过期了（父音频被上一次写入改过）。
+	// 整轨不该靠客户端 revision 兜底 —— cueRevisions.base() 会用重扫后的曲库当前值。
 	items := make([]domain.BatchEditItem, 0, len(virtual))
 	for _, track := range virtual {
-		items = append(items, domain.BatchEditItem{TrackID: track.ID, BaseRevision: track.Revision})
+		items = append(items, domain.BatchEditItem{TrackID: track.ID, BaseRevision: "rev-stale-from-review-page"})
 	}
 	payload := domain.BatchEditPayload{
 		Items:      items,
