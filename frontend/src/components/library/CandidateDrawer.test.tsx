@@ -143,6 +143,35 @@ it('explains that cue virtual tracks cannot embed lyrics and keeps .lrc optional
   expect(screen.getByText(/整轨虚拟轨道只能存为/)).toBeInTheDocument();
 });
 
+it('carries the candidate lyrics into the patch when .lrc export is ticked on a cue virtual track', async () => {
+  const user = userEvent.setup();
+  const onApply = vi.fn().mockResolvedValue(undefined);
+  const cueTrack: Track = {...track, cuePath: 'album.cue', startOffsetSeconds: 0, endOffsetSeconds: 120, lyrics: ''};
+  render(
+    <CandidateDrawer
+      open
+      track={cueTrack}
+      candidates={[candidate]}
+      loading={false}
+      onClose={() => undefined}
+      onApply={onApply}
+    />,
+  );
+
+  const writeCue = screen.getByRole('checkbox', {name: /^写入 cue 标签/});
+  const lrc = screen.getByRole('checkbox', {name: /^导出 \.lrc 歌词文件/});
+  expect(writeCue).not.toBeChecked();
+
+  await user.click(lrc);
+  // 勾选导出时必须自动带上候选歌词，否则导出的是文件里的空歌词、不会生成 .lrc
+  expect(writeCue).toBeChecked();
+
+  await user.click(screen.getByRole('button', {name: '采用所选资料'}));
+  await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  expect(onApply.mock.calls[0][0].lyrics).toBe('[00:01.00]new lyrics');
+  expect(onApply.mock.calls[0][2]).toEqual({artwork: false, exportLrc: true});
+});
+
 it('toggles all available metadata fields off when the select-all control is clicked again', async () => {
   const user = userEvent.setup();
   render(

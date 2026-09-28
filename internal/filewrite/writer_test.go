@@ -360,6 +360,79 @@ func TestWriterWritesAndDeletesLyricsSidecarWithRevisionGuard(t *testing.T) {
 	}
 }
 
+// 回归：cue 虚拟轨道的 sidecar 必须落在 <父音频>.<NNN>.lrc。
+// 曾经只改 RelativePath 而没同步 AbsolutePath，被 containedPath 判为越界（403），
+// 表现为「勾选导出 .lrc 后什么都没发生」。
+func TestWriterWritesCueVirtualTrackSidecarUnderLibraryRoot(t *testing.T) {
+	root := t.TempDir()
+	audioPath := filepath.Join(root, "album.wav")
+	if err := os.WriteFile(audioPath, []byte("fake wav bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cueBody := "PERFORMER \"A\"\nTITLE \"Album\"\nFILE \"album.wav\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"One\"\n    INDEX 01 00:00:00\n" +
+		"  TRACK 02 AUDIO\n    TITLE \"Two\"\n    INDEX 01 03:00:00\n"
+	if err := os.WriteFile(filepath.Join(root, "album.cue"), []byte(cueBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	engine := newMemoryEngine(map[string][]string{"TITLE": {"Album"}})
+	writer, err := New(root, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := engine.Read(context.Background(), audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative := "album.wav"
+	ref := library.FileRef{
+		ID:           "trk-cue-1",
+		RelativePath: domain.CueVirtualPath(relative, 1),
+		AbsolutePath: filepath.Join(root, filepath.FromSlash(relative)),
+		Revision:     scanner.FileRevision(relative, info, snapshot.Raw),
+		Format:       domain.FormatWAV,
+	}
+	sidecarPath := filepath.Join(root, "album.001.lrc")
+
+	content := "[00:01.00]Hello\n"
+	result, err := writer.WriteSidecar(context.Background(), ref, ref.Revision, "", &content, false)
+	if err != nil {
+		t.Fatalf("cue virtual sidecar write: %v", err)
+	}
+	if !result.Changed || result.AfterContent != content {
+		t.Fatalf("cue virtual sidecar write result = %#v", result)
+	}
+	if got, err := os.ReadFile(sidecarPath); err != nil || string(got) != content {
+		t.Fatalf("cue virtual sidecar content = %q err=%v", got, err)
+	}
+
+	read, err := writer.ReadSidecar(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("cue virtual sidecar read: %v", err)
+	}
+	if read.Content != content || read.Info == nil || !read.Info.Exists {
+		t.Fatalf("cue virtual sidecar read = %#v", read)
+	}
+
+	deleted, err := writer.WriteSidecar(context.Background(), ref, ref.Revision, result.CurrentSidecarRevision, nil, false)
+	if err != nil {
+		t.Fatalf("cue virtual sidecar delete: %v", err)
+	}
+	if !deleted.Changed {
+		t.Fatalf("cue virtual sidecar delete result = %#v", deleted)
+	}
+	if _, err := os.Stat(sidecarPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cue virtual sidecar still present: %v", err)
+	}
+	if _, err := os.Stat(audioPath); err != nil {
+		t.Fatalf("parent audio must stay untouched: %v", err)
+	}
+}
+
 func TestWriterRestoresManagedSnapshotAndPreservesPrivateTags(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "song.flac")

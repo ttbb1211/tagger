@@ -417,7 +417,10 @@ export function CandidateDrawer({
       discTotal: track.discTotal,
       year: track.year,
       genres: [...track.genres],
-      lyrics: includeLyrics ? lyricsDraft : track.lyrics,
+      // 整轨 CUE 虚拟轨道无法内嵌歌词，.lrc 是唯一能真正落盘的途径：
+      // 勾选「导出 .lrc」时必须把编辑器里的歌词带进 patch，否则带过去的是
+      // 文件里原有的（通常为空）歌词，用户会看到提示却没有生成文件。
+      lyrics: includeLyrics || (exportLrc && cueVirtual) ? lyricsDraft : track.lyrics,
       comment: track.comment,
       composers: [...track.composers],
       conductor: track.conductor,
@@ -648,7 +651,7 @@ export function CandidateDrawer({
                     />
                     <small>
                       可以修正错字、时间轴或补充内容；勾选下方“{cueVirtual ? '写入 cue 标签' : '同时写入歌词'}”后才会保存
-                      {cueVirtual ? '（整轨歌词需同时勾选“导出 .lrc 歌词文件”才能真正落盘）' : '到音频文件'}。
+                      {cueVirtual ? '（整轨歌词请勾选“导出 .lrc 歌词文件”，会自动带上“写入 cue 标签”）' : '到音频文件'}。
                     </small>
                   </div>
                 )}
@@ -687,14 +690,23 @@ export function CandidateDrawer({
                     <input
                       type="checkbox"
                       checked={exportLrc}
-                      onChange={(event) => setExportLrc(event.target.checked)}
+                      onChange={(event) => {
+                        const next = event.target.checked;
+                        setExportLrc(next);
+                        // 整轨虚拟轨道的歌词只能靠 .lrc 落盘。用户勾选「导出」即表达了
+                        // 要保存歌词的意图，这里同步带上候选歌词，避免「只勾导出」却因
+                        // 歌词没入选而空跑；仍可手动取消。
+                        if (next && cueVirtual && selected?.hasLyrics && selected.lyrics?.value) {
+                          setIncludeLyrics(true);
+                        }
+                      }}
                     />
                     <FileText size={16} />
                     <span>
                       <strong>{cueVirtual ? '导出 .lrc 歌词文件' : '同时导出 .lrc 歌词文件'}</strong>
                       <small>
                         {cueVirtual
-                          ? '可选。整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc；不勾选则歌词只保留在曲库索引中，完整重扫会丢失'
+                          ? '可选。整轨虚拟轨道只能存为 <父音频>.<轨号>.lrc；勾选后会把上方歌词一并写入，不勾选则歌词只保留在曲库索引中，完整重扫会丢失'
                           : '与音频同目录同名，如 歌曲.lrc；可单独编辑，或拷贝给其他播放器'}
                       </small>
                     </span>

@@ -302,26 +302,19 @@ func (w *Writer) WriteSidecar(ctx context.Context, ref library.FileRef, baseRevi
 	}
 	// 虚拟轨道：音频 revision 基于父整轨文件，sidecar 落在 <父音频>.<NNN>.lrc
 	if domain.IsCueVirtualPath(ref.RelativePath) {
-		parentRel, number, err := domain.ParseCueVirtualPath(ref.RelativePath)
+		parent, number, err := w.cueParentRef(ref)
 		if err != nil {
 			return SidecarResult{}, err
 		}
-		parent, _, err := w.cueParentRef(ref)
+		path, err := w.containedPath(parent)
 		if err != nil {
 			return SidecarResult{}, err
 		}
-		sidecar := parent
-		sidecar.RelativePath = domain.CueSidecarPath(parentRel, number)
-		ref = parent
-		path, err := w.containedPath(ref)
+		sidecarPath, err := w.containedCueSidecarPath(parent, number)
 		if err != nil {
 			return SidecarResult{}, err
 		}
-		sidecarPath, err := w.containedPath(sidecar)
-		if err != nil {
-			return SidecarResult{}, err
-		}
-		return w.writeSidecarFlow(ctx, ref, path, sidecarPath, baseRevision, baseSidecarRevision, content, dryRun)
+		return w.writeSidecarFlow(ctx, parent, path, sidecarPath, baseRevision, baseSidecarRevision, content, dryRun)
 	}
 	path, err := w.containedPath(ref)
 	if err != nil {
@@ -1356,13 +1349,32 @@ func writeCueAtomic(path string, data []byte) error {
 // cue 虚拟轨道为 父音频.NNN.lrc）。
 func (w *Writer) sidecarPathFor(ref library.FileRef) (string, error) {
 	if domain.IsCueVirtualPath(ref.RelativePath) {
-		parentRel, number, err := domain.ParseCueVirtualPath(ref.RelativePath)
+		parent, number, err := w.cueParentRef(ref)
 		if err != nil {
 			return "", err
 		}
-		sr := ref
-		sr.RelativePath = domain.CueSidecarPath(parentRel, number)
-		return w.containedPath(sr)
+		return w.containedCueSidecarPath(parent, number)
 	}
 	return w.containedSidecarPath(ref)
+}
+
+// containedCueSidecarPath 返回 cue 虚拟轨道歌词 sidecar 的绝对路径。
+// 与 containedSidecarPath 同理：先校验父音频在库内，再由父路径字符串派生
+// <父音频>.<NNN>.lrc —— 不能对 sidecar 本身调用 containedPath，因为新建的
+// .lrc 尚不存在，containedPath 会 Lstat 目标文件并直接失败。
+func (w *Writer) containedCueSidecarPath(parent library.FileRef, number int) (string, error) {
+	audioPath, err := w.containedPath(parent)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimSuffix(audioPath, filepath.Ext(audioPath))
+	path := fmt.Sprintf("%s.%03d.lrc", base, number)
+	info, statErr := os.Lstat(path)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", statErr
+	}
+	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", ErrPathOutsideRoot
+	}
+	return path, nil
 }
