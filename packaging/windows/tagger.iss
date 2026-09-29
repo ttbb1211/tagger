@@ -60,6 +60,7 @@ Type: files; Name: "{commondesktop}\Tagger.lnk"
 var
   MusicDirPage: TInputDirWizardPage;
   SkipCheckbox: TNewCheckBox;
+  DeleteDataPage: TInputOptionWizardPage;
 
 procedure InitializeWizard;
 begin
@@ -115,4 +116,24 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if (CurStep = ssPostInstall) and IsSkipMusicDir then
     MsgBox('您选择了稍后设置音乐目录。' #13#10 #13#10 '设置方法：右键开始菜单中的「Tagger」快捷方式 → 属性 → 在「目标」末尾加上  -music-dir "你的音乐目录" 。' #13#10 '详细说明见安装目录下的《如何设置音乐目录.txt》。', mbInformation, MB_OK);
+end;
+
+{ 卸载时询问是否一并删除用户数据（曲库索引/设置/缓存）。
+  TaggerData 默认不删（保留用户曲库索引），只有用户主动勾选才删。 }
+procedure InitializeUninstallProgressForm();
+begin
+  DeleteDataPage := CreateInputOptionPage(wpSelectTasks,
+    '删除用户数据',
+    '是否同时删除 Tagger 的用户数据？',
+    '用户数据位于 ' + ExpandConstant('{localappdata}') + '\TaggerData，包含曲库索引、设置与缓存。' #13#10 +
+    '勾选后将在卸载时一并删除，此操作不可恢复；不勾选则保留数据（重装后可继续用）。',
+    False, False);
+  DeleteDataPage.Add('同时删除所有用户数据（曲库索引/设置，不可恢复）');
+  DeleteDataPage.Values[0] := False;
+end;
+
+procedure CurUninstallStepChanged(CurStep: TUninstallStep);
+begin
+  if (CurStep = usPostUninstall) and DeleteDataPage.Values[0] then
+    DelTree(ExpandConstant('{localappdata}\TaggerData'), False, True, True);
 end;
