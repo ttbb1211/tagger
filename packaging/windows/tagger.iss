@@ -60,7 +60,7 @@ Type: files; Name: "{commondesktop}\Tagger.lnk"
 var
   MusicDirPage: TInputDirWizardPage;
   SkipCheckbox: TNewCheckBox;
-  DeleteDataPage: TInputOptionWizardPage;
+  DeleteData: Boolean;
 
 procedure InitializeWizard;
 begin
@@ -119,21 +119,22 @@ begin
 end;
 
 { 卸载时询问是否一并删除用户数据（曲库索引/设置/缓存）。
-  TaggerData 默认不删（保留用户曲库索引），只有用户主动勾选才删。 }
-procedure InitializeUninstallProgressForm();
-begin
-  DeleteDataPage := CreateInputOptionPage(wpSelectTasks,
-    '删除用户数据',
-    '是否同时删除 Tagger 的用户数据？',
-    '用户数据位于 ' + ExpandConstant('{localappdata}') + '\TaggerData，包含曲库索引、设置与缓存。' #13#10 +
-    '勾选后将在卸载时一并删除，此操作不可恢复；不勾选则保留数据（重装后可继续用）。',
-    False, False);
-  DeleteDataPage.Add('同时删除所有用户数据（曲库索引/设置，不可恢复）');
-  DeleteDataPage.Values[0] := False;
-end;
-
+  ⚠️ Inno Setup 的 CreateInputOptionPage 只能在安装阶段调用，
+  卸载阶段调用会报 "Cannot call CreateInputOptionPage function during Uninstall."
+  （v1.5.1 的回归老板安装 v1.5.1 后卸不掉的根因）。
+  卸载时拿用户输入的标准做法 = MsgBox（或 TaskDialog）：
+  这里用 MsgBox 的 Yes/No，默认 Yes = 保留数据（与老板「默认不勾」意图一致），
+  只有用户主动选 No 才删除 TaggerData（不可恢复）。}
 procedure CurUninstallStepChanged(CurStep: TUninstallStep);
 begin
-  if (CurStep = usPostUninstall) and DeleteDataPage.Values[0] then
+  if CurStep = usUninstall then
+    DeleteData := MsgBox(
+      '卸载时是否保留 Tagger 的用户数据？' + #13#10 + #13#10 +
+      '位置：' + ExpandConstant('{localappdata}') + '\TaggerData' + #13#10 +
+      '包含：曲库索引、设置、缓存' + #13#10 + #13#10 +
+      '选「是」= 保留数据（默认，重装后可继续用）' + #13#10 +
+      '选「否」= 一并删除（不可恢复）',
+      mbConfirmation, MB_YESNO) = IDNO;
+  if (CurStep = usPostUninstall) and DeleteData then
     DelTree(ExpandConstant('{localappdata}\TaggerData'), False, True, True);
 end;

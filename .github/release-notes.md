@@ -1,4 +1,4 @@
-# Tagger v1.5.1
+# Tagger v1.5.2
 
 本仓库是 [Ericwyn/tagger](https://github.com/Ericwyn/tagger) 的 fork（`ttbb1211/tagger`），面向中文音乐库整理：整轨 CUE 专辑、中文数据源、歌词 `.lrc`、简体转换等。
 
@@ -6,24 +6,30 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `tagger_setup_1.5.1_windows_amd64.exe` | Windows x86_64 **安装包**（向导可选音乐库目录，装完自动启动） |
-| `tagger_1.5.1_windows_amd64.zip` | Windows x86_64 **便携版**（解压即用，双击 `tagger.exe`） |
-| `tagger_1.5.1_windows_amd64.zip.sha256` | 便携包的 SHA-256 校验值 |
+| `tagger_setup_1.5.2_windows_amd64.exe` | Windows x86_64 **安装包**（向导可选音乐库目录，装完自动启动） |
+| `tagger_1.5.2_windows_amd64.zip` | Windows x86_64 **便携版**（解压即用，双击 `tagger.exe`） |
+| `tagger_1.5.2_windows_amd64.zip.sha256` | 便携包的 SHA-256 校验值 |
 
 Windows 版双击后弹出 WebView2 原生窗口，关窗口即退出；也可 `tagger.exe -ui=browser` 用浏览器打开、`-ui=server` 纯后台服务（默认 `127.0.0.1:8080`）。
 
 Linux / macOS 暂无预编译包，请用源码构建：
 
 ```bash
-make build VERSION=1.5.1     # 产物 dist/tagger
-docker build --build-arg VERSION=1.5.1 -t my-tagger .
+make build VERSION=1.5.2     # 产物 dist/tagger
+docker build --build-arg VERSION=1.5.2 -t my-tagger .
 ```
 
-> 版本号由构建注入（`-ldflags -X .../internal/version.Version=`）。界面顶栏与曲库页底部会显示 `v1.5.1`，设置页「系统信息」同样可查。
+> 版本号由构建注入（`-ldflags -X .../internal/version.Version=`）。界面顶栏与曲库页底部会显示 `v1.5.2`，设置页「系统信息」同样可查。
 
-## v1.5.1 主要变化
+## v1.5.2 主要变化
 
-- **卸载可选清理用户数据**：安装包卸载时新增「同时删除所有用户数据（曲库索引/设置，不可恢复）」选项，**默认不勾**——正常卸载保留 `%LOCALAPPDATA%\TaggerData`（曲库索引与设置，重装后可直接沿用）；勾选才彻底清除。此前卸载完全不删用户数据，重装 Windows 后旧记录仍在。
+- **修复 v1.5.1 卸载崩溃**：v1.5.1 的安装包用了 `CreateInputOptionPage` 写卸载选项，但 Inno Setup 的 `CreateInputOptionPage` 只能在**安装阶段**调用，卸载阶段调用会报
+  `Runtime error (at 32:451): Internal error: Cannot call "CreateInputOptionPage" function during Uninstall.`，导致**装上 v1.5.1 后无法卸载**。v1.5.2 改用 `MsgBox`（Yes/No，默认 Yes = 保留数据），功能与 v1.5.1 一致、默认行为也保留（默认不删）。
+- ⚠️ **升级 v1.5.1 的用户**：v1.5.2 装好后**不要用 v1.5.1 的卸载流程**——它会立即崩。要卸 v1.5.1 装 v1.5.2，请直接运行 v1.5.2 的安装包（**ISCC 安装流程会先检测并卸载旧版，正常情况下可以走「安装即卸载」**；如果 Windows 的「程序和功能」面板里 v1.5.1 仍显示，先双击 v1.5.2 安装包走修复流程，再尝试卸载）。如果仍然卡住，手工清理 `C:\Program Files\Tagger\tagger.exe`（Inno Setup 留下的 uninstall exe 通常可用）即可。
+
+## v1.5.1 主要变化（v1.5.2 修复后有效）
+
+- **卸载可选清理用户数据**：安装包卸载时新增「是否保留 Tagger 的用户数据」确认框，**默认 Yes = 保留**（保留 `%LOCALAPPDATA%\TaggerData`，曲库索引与设置重装后可直接沿用）；选 No 才彻底清除。
 
 ## v1.5.0 主要变化
 
@@ -41,3 +47,4 @@ docker build --build-arg VERSION=1.5.1 -t my-tagger .
 
 - 整轨 CUE 的歌词若未导出 `.lrc`，只留在曲库索引里，**完整重扫会丢失**，界面保存时会提示。
 - 已手动关闭过的数据源开关会持久化，不受代码默认值变更影响。
+- v1.5.1 装上无法卸载的用户，请直接跑 v1.5.2 安装包走「检测到旧版→卸载旧版→装新版」流程；如失败参考上节手工清理。
