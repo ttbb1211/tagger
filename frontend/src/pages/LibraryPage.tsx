@@ -233,6 +233,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
   const [librarySidebarWidth, setLibrarySidebarWidth] = useState<number | undefined>(readLibrarySidebarWidth);
   const [resizingLibrarySidebar, setResizingLibrarySidebar] = useState(false);
   const [batchTrackLimit, setBatchTrackLimit] = useState(defaultBatchTrackLimit);
+  const [version, setVersion] = useState('');
   const [libraries, setLibraries] = useState<LibrarySummary[]>([]);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [pageTotal, setPageTotal] = useState(0);
@@ -638,6 +639,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
     void loadData();
     void getSystem().then((info) => {
       if (typeof info.batchTrackLimit === 'number') setBatchTrackLimit(info.batchTrackLimit);
+      if (info.version && info.version !== 'mock') setVersion(info.version);
     }).catch(() => undefined);
   }, []);
 
@@ -1423,7 +1425,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		<div className="workspace-foot">
 		  <span>已加载 {visibleTracks.length} / 共 {pageTotal} 首</span>
 		  <span><i className={cn('status-dot', library.watchState === 'healthy' ? 'healthy' : 'warning')} /> {library.watchState === 'polling' ? '目录轮询' : library.watchState === 'degraded' ? '监听降级' : '实时监听'}</span>
-          <span>{apiReadMode === 'real' ? 'Go API · 安全写入' : 'Mock API · rev 0.1'}</span>
+          <span>{apiReadMode === 'real' ? 'Go API · 安全写入' : 'Mock API · rev 0.1'}{version ? ` · v${version}` : ''}</span>
         </div>
       </section>
 

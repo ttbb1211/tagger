@@ -11,6 +11,7 @@ import type {PageID, Track} from '@/types';
 
 interface TopBarProps {
   page: PageID;
+  version?: string;
   onNavigate: (page: PageID) => void;
   playerTrack: Track | null;
   playerPlaying: boolean;
@@ -25,14 +26,14 @@ const navItems: Array<{id: PageID; label: string; icon: typeof LibraryBig}> = [
   {id: 'settings', label: '设置', icon: Settings2},
 ];
 
-export function TopBar({page, onNavigate, playerTrack, playerPlaying, onPlayerPlayingChange, onPlayerClose}: TopBarProps) {
+export function TopBar({page, version, onNavigate, playerTrack, playerPlaying, onPlayerPlayingChange, onPlayerClose}: TopBarProps) {
   return (
     <header className="top-bar">
       <button className="brand-block" onClick={() => onNavigate('library')} aria-label="返回曲库">
         <TaggerMark className="brand-mark" />
         <span>
           <strong>TAGGER</strong>
-          <small>MUSIC ARCHIVE / 01</small>
+          <small title={version ? `Tagger ${version}` : undefined}>{version ? `v${version}` : 'MUSIC ARCHIVE / 01'}</small>
         </span>
       </button>
 

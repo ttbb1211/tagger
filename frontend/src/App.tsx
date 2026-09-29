@@ -22,6 +22,7 @@ export function App() {
   const [jobFocusId, setJobFocusId] = useState<string>();
   const [showGeneratedCovers, setShowGeneratedCovers] = useState(() => localStorage.getItem('tagger-generated-covers') === 'true');
   const [authState, setAuthState] = useState<'checking' | 'ready' | 'required'>(apiReadMode === 'mock' ? 'ready' : 'checking');
+  const [version, setVersion] = useState('');
   const [authError, setAuthError] = useState('');
   const [restoreDraft, setRestoreDraft] = useState<RestoreDraftRequest>();
 
@@ -52,7 +53,10 @@ export function App() {
 
   useEffect(() => {
     if (apiReadMode === 'mock') return;
-    void getSystem().then(() => setAuthState('ready')).catch((error) => {
+    void getSystem().then((info) => {
+      if (info.version && info.version !== 'mock') setVersion(info.version);
+      setAuthState('ready');
+    }).catch((error) => {
       setAuthError(error instanceof APIError && error.status === 401 ? '当前服务已启用访问令牌保护' : (error instanceof Error ? error.message : '后台连接失败'));
       setAuthState('required');
     });
@@ -121,6 +125,7 @@ export function App() {
     <div className="app-shell">
       <TopBar
         page={route.page}
+        version={version}
         onNavigate={navigatePage}
         playerTrack={playerTrack}
         playerPlaying={playerPlaying}
