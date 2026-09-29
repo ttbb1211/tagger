@@ -14,8 +14,45 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 推送 v* tag 时先建 Release（用 GITHUB_TOKEN）。注意：GITHUB_TOKEN 创建的
+  # release 不会再触发本 workflow 的 release/published 事件，所以资产由本文件
+  # 末尾的 publish_release 直接上传，不存在循环触发。
+  create_release:
+    name: Create GitHub Release from tag
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Create release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "release $TAG already exists, leaving it untouched"
+            exit 0
+          fi
+          if [ -f .github/release-notes.md ]; then
+            notes_args=(--notes-file .github/release-notes.md)
+          else
+            notes_args=(--generate-notes)
+          fi
+          gh release create "$TAG" --repo "$GH_REPO" \
+            --target "${GITHUB_SHA}" \
+            --title "Tagger ${TAG#v}" \
+            "${notes_args[@]}"
+
   build_windows_amd64:
     name: Build windows/amd64
+    needs:
+      - create_release
     runs-on: windows-latest
     permissions:
       contents: read
@@ -51,6 +88,8 @@ jobs:
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
             version="${RELEASE_TAG#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME#v}"
           else
             version="dev-${GITHUB_SHA:0:7}"
           fi
@@ -171,9 +210,10 @@ jobs:
 
   publish_release:
     name: Attach assets to GitHub Release
-    if: ${{ github.event_name == 'release' }}
+    if: ${{ github.event_name == 'release' || startsWith(github.ref, 'refs/tags/v') }}
     needs:
       - build_windows_amd64
+      - create_release
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -195,7 +235,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
           ZIP_NAME: ${{ needs.build_windows_amd64.outputs.zip_name }}
           INSTALLER_NAME: ${{ needs.build_windows_amd64.outputs.installer_name }}
           CHECKSUM_NAME: ${{ needs.build_windows_amd64.outputs.checksum_name }}
