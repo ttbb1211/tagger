@@ -239,9 +239,10 @@ jobs:
           INSTALLER_NAME: ${{ needs.build_windows_amd64.outputs.installer_name }}
           CHECKSUM_NAME: ${{ needs.build_windows_amd64.outputs.checksum_name }}
         run: |
+          # ★ 不写 #label：让 UI 显示名 = 文件名（已含 ${version}），与 Linux 包一致
           gh release upload "$RELEASE_TAG" \
-            "release/$ZIP_NAME#Windows x86_64 portable (amd64)" \
-            "release/$INSTALLER_NAME#Windows x86_64 installer (amd64)" \
-            "release/$CHECKSUM_NAME#SHA-256 checksum (portable zip)" \
+            "release/$ZIP_NAME" \
+            "release/$INSTALLER_NAME" \
+            "release/$CHECKSUM_NAME" \
             --clobber \
             --repo "$GH_REPO"
