@@ -35,9 +35,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          # 删除 tag 会连带删除 GitHub 上的 Release（存在删除延迟），
+          # 所以这里一律「不存在就创建、存在则先删后建」，保证幂等。
           if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "release $TAG already exists, leaving it untouched"
-            exit 0
+            gh release delete "$TAG" --repo "$GH_REPO" --yes || true
           fi
           if [ -f .github/release-notes.md ]; then
             notes_args=(--notes-file .github/release-notes.md)
