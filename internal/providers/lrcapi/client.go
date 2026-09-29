@@ -83,7 +83,7 @@ func (c *Client) Descriptor() providers.Descriptor {
 		ID: "lrcapi", Name: "LrcApi 聚合", ShortName: "LA",
 		Description:  "可自托管的歌词与封面聚合接口",
 		Capabilities: []string{"歌词", "同步歌词", "封面"},
-		Health:       providers.HealthDegraded, Enabled: false, Experimental: true,
+		Health:       providers.HealthDegraded, Enabled: true, Experimental: true,
 		Accent: "#8067d8", QuotaLabel: "实验性 · 可配置自托管地址",
 	}
 }

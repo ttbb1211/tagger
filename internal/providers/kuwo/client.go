@@ -86,7 +86,7 @@ func (c *Client) ResetConfig() error {
 }
 
 func (c *Client) Descriptor() providers.Descriptor {
-	return providers.Descriptor{ID: "kuwo", Name: "酷我音乐", ShortName: "KW", Description: "中文曲库、同步歌词与封面实验性来源", Capabilities: []string{"歌曲", "专辑", "音轨", "歌词", "同步歌词", "封面"}, Health: providers.HealthDegraded, Enabled: false, Experimental: true, Accent: "#d69e2e", QuotaLabel: "实验性网页接口 · 默认关闭"}
+	return providers.Descriptor{ID: "kuwo", Name: "酷我音乐", ShortName: "KW", Description: "中文曲库、同步歌词与封面实验性来源", Capabilities: []string{"歌曲", "专辑", "音轨", "歌词", "同步歌词", "封面"}, Health: providers.HealthDegraded, Enabled: true, Experimental: true, Accent: "#d69e2e", QuotaLabel: "实验性网页接口 · 默认启用"}
 }
 
 func (c *Client) ConfigFields() []providers.ConfigField {

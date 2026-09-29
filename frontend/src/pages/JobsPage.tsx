@@ -304,7 +304,7 @@ export function JobsPage({onOpenReview, focusJobId}: JobsPageProps) {
       <ConfirmDialog
         open={Boolean(discardJob)}
         title="丢弃待审核结果？"
-        description="这只会删除本次抓取的候选和审核快照，不会修改任何音乐文件。丢弃后才能安全切换到其他曲库。"
+        description="丢弃只会把该任务标记为已取消，不会修改任何音乐文件，也不会删除已抓取的候选。丢弃后曲库切换不再受它阻挡。"
         confirmLabel="确认丢弃"
         busy={discarding}
         error={discardError}

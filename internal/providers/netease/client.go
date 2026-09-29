@@ -81,8 +81,8 @@ func (c *Client) Descriptor() providers.Descriptor {
 		ID: "netease", Name: "网易云音乐", ShortName: "NE",
 		Description:  "中文曲库、同步歌词与专辑封面",
 		Capabilities: []string{"歌曲", "专辑", "音轨", "歌词", "同步歌词", "封面"},
-		Health:       providers.HealthDegraded, Enabled: false, Experimental: true,
-		Accent: "#d62d20", QuotaLabel: "实验性网页接口 · 设置中启用",
+		Health:       providers.HealthDegraded, Enabled: true, Experimental: true,
+		Accent: "#d62d20", QuotaLabel: "实验性网页接口 · 默认启用",
 	}
 }
 

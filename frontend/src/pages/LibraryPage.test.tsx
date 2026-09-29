@@ -220,4 +220,63 @@ describe('LibraryPage active library boundary', () => {
 		expect(screen.getByRole('button', {name: '批量编辑'})).toBeDisabled();
 		expect(screen.getByRole('button', {name: '抓取元数据'})).toBeDisabled();
 	  });
+
+	  it('keeps batch completion usable when a visible track failed to index', async () => {
+		const user = userEvent.setup();
+		// 一个永久解析失败的 WAV 曾经让整个目录的「批量补全」置灰，用户无路可走。
+		const errorTrack: Track = {...secondTrack, syncState: 'error'};
+		installTrackPageSource([firstTrack, errorTrack]);
+		render(<LibraryPage onOpenReview={vi.fn()} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
+		await screen.findByText('第一首');
+
+		const [batchButton] = screen.getAllByRole('button', {name: /批量补全/});
+		expect(batchButton).toBeEnabled();
+		await user.click(batchButton);
+
+		const dialog = await screen.findByRole('dialog', {name: '开始批量抓取元数据？'});
+		expect(dialog).toHaveTextContent('本次将对 1 首曲目发起元数据抓取');
+		expect(dialog).toHaveTextContent('已跳过 1 首未完成索引的曲目');
+	  });
+
+	  it('keeps the selection bar operable when the selection mixes indexed and unindexed tracks', async () => {
+		const user = userEvent.setup();
+		const onOpenReview = vi.fn();
+		const errorTrack: Track = {...secondTrack, syncState: 'error'};
+		installTrackPageSource([firstTrack, errorTrack]);
+		render(<LibraryPage onOpenReview={onOpenReview} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
+		await screen.findByText('第一首');
+
+		// 全选会把正常曲目和解析失败的曲目一起选上（曲目行由 Virtuoso 渲染，jsdom 里不可点）。
+		await user.click(screen.getByRole('button', {name: '全选当前结果集'}));
+
+		// 未索引曲目不再一票否决：按钮按「可操作子集」判断，并如实报出跳过了谁。
+		expect(screen.getByRole('button', {name: '批量编辑'})).toBeEnabled();
+		expect(screen.getByRole('button', {name: '抓取元数据'})).toBeEnabled();
+		expect(screen.getByText('已跳过 1 首未索引曲目')).toBeInTheDocument();
+
+		await user.click(screen.getByRole('button', {name: '抓取元数据'}));
+		const dialog = await screen.findByRole('dialog', {name: '开始批量抓取元数据？'});
+		expect(dialog).toHaveTextContent('本次将对 1 首曲目发起元数据抓取');
+
+		await user.click(screen.getByRole('button', {name: '开始抓取'}));
+		expect(onOpenReview).toHaveBeenCalledWith(['trk-one']);
+	  });
+
+	  it('asks for confirmation before queueing a batch match job', async () => {
+		const user = userEvent.setup();
+		const onOpenReview = vi.fn();
+		render(<LibraryPage onOpenReview={onOpenReview} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
+		await screen.findByText('第一首');
+
+		const [batchButton] = screen.getAllByRole('button', {name: /批量补全/});
+		await user.click(batchButton);
+
+		const dialog = await screen.findByRole('dialog', {name: '开始批量抓取元数据？'});
+		expect(dialog).toHaveTextContent('本次将对 1 首曲目发起元数据抓取');
+		// 关键：点按钮本身不再直接建任务
+		expect(onOpenReview).not.toHaveBeenCalled();
+
+		await user.click(screen.getByRole('button', {name: '开始抓取'}));
+		expect(onOpenReview).toHaveBeenCalledWith(['trk-one']);
+	  });
 });

@@ -89,8 +89,8 @@ func (c *Client) Descriptor() providers.Descriptor {
 		ID: "kugou", Name: "酷狗音乐", ShortName: "KG",
 		Description:  "中文曲库、LRC 歌词与歌曲封面",
 		Capabilities: []string{"歌曲", "专辑", "歌词", "同步歌词", "封面"},
-		Health:       providers.HealthDegraded, Enabled: false, Experimental: true,
-		Accent: "#14a86b", QuotaLabel: "实验性网页接口 · 设置中启用",
+		Health:       providers.HealthDegraded, Enabled: true, Experimental: true,
+		Accent: "#14a86b", QuotaLabel: "实验性网页接口 · 默认启用",
 	}
 }
 

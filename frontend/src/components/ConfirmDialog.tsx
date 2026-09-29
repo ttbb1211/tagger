@@ -8,13 +8,17 @@ interface ConfirmDialogProps {
   description: string;
   confirmLabel: string;
   cancelLabel?: string;
+  /** 'danger' (default) paints the confirm button red; use 'primary' for
+   *  confirmations that start a normal forward action rather than destroy
+   *  something. */
+  confirmTone?: 'danger' | 'primary';
   busy?: boolean;
   error?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export function ConfirmDialog({open, title, description, confirmLabel, cancelLabel = '取消', busy = false, error, onConfirm, onCancel}: ConfirmDialogProps) {
+export function ConfirmDialog({open, title, description, confirmLabel, cancelLabel = '取消', confirmTone = 'danger', busy = false, error, onConfirm, onCancel}: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -39,7 +43,7 @@ export function ConfirmDialog({open, title, description, confirmLabel, cancelLab
           {error && <div className="confirm-dialog-error">{error}</div>}
           <div className="confirm-dialog-actions">
             <button className="secondary-button" type="button" ref={cancelRef} onClick={onCancel} disabled={busy}>{cancelLabel}</button>
-            <button className="danger-button" type="button" onClick={onConfirm} disabled={busy}>{busy && <LoaderCircle size={14} className="spin" />}{busy ? '处理中…' : confirmLabel}</button>
+            <button className={confirmTone === 'primary' ? 'primary-button' : 'danger-button'} type="button" onClick={onConfirm} disabled={busy}>{busy && <LoaderCircle size={14} className="spin" />}{busy ? '处理中…' : confirmLabel}</button>
           </div>
         </div>
       </section>

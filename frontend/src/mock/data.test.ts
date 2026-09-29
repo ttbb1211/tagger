@@ -19,9 +19,11 @@ describe('mock music archive', () => {
 	  expect(candidates[3].scoreLabel).toContain('版本');
   });
 
-  it('marks unofficial providers as experimental', () => {
-    expect(providerConfigs.find((provider) => provider.id === 'netease')?.experimental).toBe(true);
-    expect(providerConfigs.find((provider) => provider.id === 'kuwo')?.enabled).toBe(false);
-    expect(providerConfigs.find((provider) => provider.id === 'lrcapi')?.experimental).toBe(true);
+  it('marks unofficial providers as experimental and enabled by default', () => {
+    for (const id of ['netease', 'kuwo', 'kugou', 'lrcapi']) {
+      const provider = providerConfigs.find((entry) => entry.id === id);
+      expect(provider?.experimental, `${id} should stay experimental`).toBe(true);
+      expect(provider?.enabled, `${id} should be enabled by default`).toBe(true);
+    }
   });
 });

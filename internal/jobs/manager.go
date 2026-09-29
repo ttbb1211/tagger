@@ -112,6 +112,12 @@ func (m *Manager) Update(ctx context.Context, job domain.Job) error {
 	return nil
 }
 
+// HasActive reports whether any job is waiting, running, or parked in review.
+//
+// Do not use it to gate operations that only need to know whether the
+// filesystem is currently being mutated — a review job is durable UI state and
+// would block those operations forever (see HasBlockingFileWork). It is kept
+// for callers that genuinely want "the queue is not idle".
 func (m *Manager) HasActive(ctx context.Context) (bool, error) {
 	items, err := m.repo.ListJobs(ctx, 200)
 	if err != nil {

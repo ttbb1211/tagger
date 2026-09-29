@@ -1730,6 +1730,28 @@ button:disabled {
   color: var(--warning);
 }
 
+/* 解析失败的重试入口：保持和原状态图标同样的视觉体量，但可点、可聚焦。 */
+.track-retry {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.track-retry:hover:not(:disabled) {
+  background: var(--paper-3);
+}
+
+.track-retry:disabled {
+  color: var(--warning);
+  cursor: default;
+}
+
 .row-more {
   display: grid;
   place-items: center;
@@ -1868,6 +1890,29 @@ button:disabled {
   display: grid;
   width: 34px;
   padding: 0;
+}
+
+/* 选择条上的「已跳过 N 首未索引曲目」。用中间点分隔而不是另起一行，
+   保证浮层高度不变；hover 的 title 里给出具体文件名与原因。 */
+.selection-skip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.selection-skip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
 }
 
 /* Inspector */
@@ -7956,6 +8001,10 @@ button:disabled {
   }
 
   .selection-divider {
+    display: none;
+  }
+
+  .selection-skip {
     display: none;
   }
 

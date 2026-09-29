@@ -21,6 +21,7 @@ import {LibrarySidebar, type SidebarFilter} from '@/components/library/LibrarySi
 import {TrackInspector} from '@/components/library/TrackInspector';
 import {TrackList} from '@/components/library/TrackList';
 import {TagSnapshotPanel, trackToPatch, type SnapshotUpdate} from '@/components/library/TagSnapshotPanel';
+import {ConfirmDialog} from '@/components/ConfirmDialog';
 import {cn} from '@/lib/utils';
 import {
   apiReadMode,
@@ -28,21 +29,22 @@ import {
   createBatchEditJob,
 	  createOrganizeJob,
 	  deleteLyricsSidecar,
-	  getSystem,
-	  listLibraries,
-	  listTrackPage,
-	  reconcileLibrary,
-	  resolveTracks,
+  getSystem,
+  listJobs,
+  listLibraries,
+  listTrackPage,
+  reconcileLibrary,
+  resolveTracks,
   rescanLibrary,
   rescanTrack,
   searchCandidates,
-	  switchLibrary,
-	  subscribeLibraryEvents,
+  switchLibrary,
+  subscribeLibraryEvents,
   updateArtwork,
-	updateTrack,
-	updateTrackWithWarnings,
-	waitForJob,
-	writeLyricsSidecar,
+  updateTrack,
+  updateTrackWithWarnings,
+  waitForJob,
+  writeLyricsSidecar,
 } from '@/api';
 import {defaultBatchTrackLimit, type BatchArtworkInput, type CandidateSearchQuery, type LibrarySummary, type MatchCandidate, type OrganizeMode, type RestoreDraftRequest, type Track, type TrackFormat, type TrackPatch, type TrackQuery, type TrackSort, type UpdateProvenance} from '@/types';
 import type {StateSnapshot} from 'react-virtuoso';
@@ -174,6 +176,28 @@ function isTrackIndexed(track: Track | undefined | null): boolean {
   return Boolean(track && (!track.syncState || track.syncState === 'indexed'));
 }
 
+function splitUnindexedTracks(tracks: Track[]): {actionable: Track[]; skipped: Track[]} {
+  const actionable: Track[] = [];
+  const skipped: Track[] = [];
+  for (const track of tracks) {
+    if (isTrackIndexed(track)) actionable.push(track);
+    else skipped.push(track);
+  }
+  return {actionable, skipped};
+}
+
+function unindexedReason(track: Track): string {
+  if (track.syncState === 'draft') return '索引中';
+  if (track.syncState === 'error') return '解析失败';
+  return '未索引';
+}
+
+function skippedTracksLabel(tracks: Track[]): string {
+  if (tracks.length === 0) return '';
+  const names = tracks.map((t) => `${t.title || t.fileName}（${unindexedReason(t)}）`).join('、');
+  return `已跳过 ${tracks.length} 首未完成索引的曲目：${names}`;
+}
+
 export function shouldPollLibrary(library: Pick<LibrarySummary, 'watchMode' | 'watchState'>): boolean {
   return library.watchMode === 'poll' || library.watchState === 'polling' || (library.watchState === 'degraded' && library.watchMode !== 'events');
 }
@@ -242,6 +266,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [snapshotUndo, setSnapshotUndo] = useState<{before: Track[]; afterRevisions: Map<string, string>; afterTracks: Map<string, Track>}>();
+  const [reviewConfirm, setReviewConfirm] = useState<{ids: string[]; pending: boolean; skipped?: Track[]} | null>(null);
   const [restoreStateFrom, setRestoreStateFrom] = useState<StateSnapshot>();
   const [initialScrollTop, setInitialScrollTop] = useState<number>();
   const initializedRef = useRef(false);
@@ -739,14 +764,15 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 
   const activeTrack = tracks.find((track) => track.id === activeTrackId) ?? null;
   const visibleTracks = tracks;
-	const hasVisibleUnindexed = visibleTracks.some((track) => !isTrackIndexed(track));
+  const hasVisibleUnindexed = visibleTracks.some((track) => !isTrackIndexed(track));
   const selectedTracks = useMemo(() => {
     const loaded = new Map(tracks.map((track) => [track.id, track]));
     return [...selectedIds].map((id) => selectedDetails.get(id) ?? loaded.get(id)).filter((track): track is Track => Boolean(track));
   }, [selectedDetails, selectedIds, tracks]);
-	const activeTrackIndexed = isTrackIndexed(activeTrack);
-	const hasUnindexedSelection = selectedTracks.some((track) => !isTrackIndexed(track));
-	const organizableTracks = selectedTracks.filter((track) => track.writable && isTrackIndexed(track));
+  const activeTrackIndexed = isTrackIndexed(activeTrack);
+  const actionableSelection = useMemo(() => selectedTracks.filter(isTrackIndexed), [selectedTracks]);
+  const skippedSelection = useMemo(() => selectedTracks.filter((t) => !isTrackIndexed(t)), [selectedTracks]);
+  const organizableTracks = selectedTracks.filter((track) => track.writable && isTrackIndexed(track));
   const snapshotTracks = selectedIds.size > 0 ? selectedTracks : visibleTracks;
   const hasActiveToolbarFilters = formatFilter !== 'all' || activeFilter !== 'all' || includeSubfolders || sortMode !== 'album';
 
@@ -987,35 +1013,47 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 
   const openReviewSelection = async () => {
     if (selectedIds.size > batchTrackLimit) {
-	  onNotice(`当前选择超过 ${batchTrackLimit} 首，请缩小范围后再批量补全`);
+      onNotice(`当前选择超过 ${batchTrackLimit} 首，请缩小范围后再批量补全`);
       return;
     }
-	    try {
-	      const resolved = selectedIds.size > 0 ? await resolveTracks({ids: [...selectedIds]}) : await resolveTracks({query});
-	      if (resolved.tracks.length === 0) {
+    try {
+      const resolved = selectedIds.size > 0 ? await resolveTracks({ids: [...selectedIds]}) : await resolveTracks({query});
+      if (resolved.tracks.length === 0) {
         onNotice('当前筛选没有可补全的曲目');
-	        return;
-	      }
-	      if (resolved.tracks.some((track) => !isTrackIndexed(track))) {
-	        onNotice('选择中包含正在索引的文件，请等待索引完成后再批量补全');
-	        return;
-	      }
+        return;
+      }
+      const {actionable, skipped} = splitUnindexedTracks(resolved.tracks);
+      if (actionable.length === 0) {
+        onNotice('所选曲目都未完成索引，暂时无法抓取元数据');
+        return;
+      }
       setSelectedIds(new Set(resolved.tracks.map((track) => track.id)));
       setSelectedDetails(new Map(resolved.tracks.map((track) => [track.id, track])));
-      onOpenReview(resolved.tracks.map((track) => track.id));
+      setReviewConfirm({ids: actionable.map((t) => t.id), pending: true, skipped: skipped.length > 0 ? skipped : undefined});
     } catch (error) {
       onNotice(trackOperationError(error, '批量补全曲目解析失败'));
     }
   };
 
+  const retryTrackParse = async (track: Track) => {
+    try {
+      await rescanTrack(track.id);
+      onNotice(`已重新解析 ${track.title || track.fileName}`);
+      void fetchPage(query).catch((error) => onNotice(trackOperationError(error, '曲目列表刷新失败')));
+    } catch (error) {
+      onNotice(trackOperationError(error, '重新解析失败'));
+    }
+  };
+
   const applyBatchEdit = async (operations: BatchOperation[], sequenceTracks: boolean, artwork?: BatchArtworkInput) => {
-	    // Match the drawer's "应用到 N 首" contract: tracks already known to
-	    // be read-only are excluded, while the backend still performs an
-	    // authoritative effective-permission preflight before enqueueing.
-	    const selectedTracksForJob = selectedTracks.filter((track) => track.writable);
-	    if (selectedTracksForJob.some((track) => !isTrackIndexed(track))) {
-	      onNotice('选择中包含正在索引的文件，请等待完成后再批量编辑');
-	      return;
+    // Match the drawer's "应用到 N 首" contract: tracks already known to
+    // be read-only are excluded, while the backend still performs an
+    // authoritative effective-permission preflight before enqueueing.
+    // 同时排除未索引曲目（draft/error），worker 读不到可靠标签。
+    const selectedTracksForJob = selectedTracks.filter((track) => track.writable && isTrackIndexed(track));
+    if (selectedTracksForJob.length === 0) {
+      onNotice('没有可编辑的已索引曲目');
+      return;
 	    }
     const failed = new Set<string>();
     let succeeded = 0;
@@ -1263,7 +1301,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
                 <RefreshCw size={15} className={scanning ? 'spin' : undefined} /> {scanning ? '扫描中…' : '快速扫描'}
               </button>
               {snapshotUndo && <button className="secondary-button" disabled={saving} onClick={() => void undoSnapshot()}><Undo2 size={15} /> 撤销导入</button>}
-			<button className="primary-button" disabled={pageTotal === 0 || hasVisibleUnindexed} title={hasVisibleUnindexed ? '索引完成后可批量补全' : undefined} onClick={() => void openReviewSelection()}>
+            <button className="primary-button" disabled={pageTotal === 0} onClick={() => void openReviewSelection()}>
                 <Sparkles size={15} /> 批量补全
               </button>
             </div>
@@ -1276,7 +1314,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
                   <RefreshCw size={15} className={scanning ? 'spin' : undefined} /> {scanning ? '扫描中…' : '快速扫描'}
                 </button>
                 {snapshotUndo && <button className="secondary-button" disabled={saving} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void undoSnapshot(); }}><Undo2 size={15} /> 撤销导入</button>}
-				<button className="primary-button" disabled={pageTotal === 0 || hasVisibleUnindexed} title={hasVisibleUnindexed ? '索引完成后可批量补全' : undefined} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void openReviewSelection(); }}>
+                <button className="primary-button" disabled={pageTotal === 0} onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); void openReviewSelection(); }}>
                   <Sparkles size={15} /> 批量补全
                 </button>
               </div>
@@ -1371,6 +1409,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
           }}
           onToggleTrack={toggleTrack}
           onToggleAll={toggleAll}
+          onRetryParse={retryTrackParse}
           resultSelectionActive={resultSelectionActive || (pageTotal > 0 && selectedIds.size === pageTotal)}
           hasMore={hasMore}
           loadingMore={loadingMore}
@@ -1378,6 +1417,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
           restoreStateFrom={restoreStateFrom}
           initialScrollTop={initialScrollTop}
           onViewportState={(state) => { viewportStateRef.current = state; }}
+          bottomSpacer={selectedIds.size > 0 ? 56 : 0}
         />
 
 		<div className="workspace-foot">
@@ -1408,17 +1448,22 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
       />
 
       {selectedIds.size > 0 && (
-	  <div className="selection-bar">
+        <div className="selection-bar">
           <div className="selection-count">
             <strong>{selectedIds.size}</strong>
             <span>首已选择</span>
           </div>
           <span className="selection-divider" />
-		  <button disabled={hasUnindexedSelection} title={hasUnindexedSelection ? '索引完成后可批量编辑' : undefined} onClick={() => setBatchEditOpen(true)}><Tags size={16} /> 批量编辑</button>
-		  <button className="selection-organize" disabled={hasUnindexedSelection || organizableTracks.length === 0} title={hasUnindexedSelection ? '索引完成后可整理文件' : organizableTracks.length === 0 ? '没有可写曲目' : undefined} onClick={() => setOrganizeOpen(true)}><FolderTree size={16} /> 整理文件</button>
-		  <button className="is-accent" disabled={hasUnindexedSelection} title={hasUnindexedSelection ? '索引完成后可抓取元数据' : undefined} onClick={() => void openReviewSelection()}>
+          <button disabled={actionableSelection.length === 0} title={actionableSelection.length === 0 ? '没有可操作的已索引曲目' : undefined} onClick={() => setBatchEditOpen(true)}><Tags size={16} /> 批量编辑</button>
+          <button className="selection-organize" disabled={organizableTracks.length === 0} title={organizableTracks.length === 0 ? '没有可写曲目' : undefined} onClick={() => setOrganizeOpen(true)}><FolderTree size={16} /> 整理文件</button>
+          <button className="is-accent" disabled={actionableSelection.length === 0} title={actionableSelection.length === 0 ? '没有可操作的已索引曲目' : undefined} onClick={() => void openReviewSelection()}>
             <Sparkles size={16} /> 抓取元数据
           </button>
+          {skippedSelection.length > 0 && (
+            <span className="selection-skip" title={skippedTracksLabel(skippedSelection)}>
+              已跳过 {skippedSelection.length} 首未索引曲目
+            </span>
+          )}
           <button className="selection-clear" title="清除选择" onClick={() => { setSelectedIds(new Set()); setSelectedDetails(new Map()); setResultSelectionActive(false); }}><X size={18} /></button>
         </div>
       )}
@@ -1437,7 +1482,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 
       <BatchEditPanel
         open={batchEditOpen}
-        tracks={selectedTracks}
+        tracks={actionableSelection}
         saving={saving}
         onClose={() => setBatchEditOpen(false)}
         onApply={applyBatchEdit}
@@ -1458,6 +1503,23 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
         saving={saving}
         onClose={() => setSnapshotOpen(false)}
         onApply={applySnapshot}
+      />
+
+      <ConfirmDialog
+        open={reviewConfirm !== null}
+        title="开始批量抓取元数据？"
+        description={reviewConfirm
+          ? `本次将对 ${reviewConfirm.ids.length} 首曲目发起元数据抓取。${reviewConfirm.skipped && reviewConfirm.skipped.length > 0 ? skippedTracksLabel(reviewConfirm.skipped) : ''}`
+          : ''}
+        confirmTone="primary"
+        confirmLabel={reviewConfirm?.pending ? '开始抓取' : '确定'}
+        onConfirm={() => {
+          if (reviewConfirm) {
+            onOpenReview(reviewConfirm.ids);
+            setReviewConfirm(null);
+          }
+        }}
+        onCancel={() => setReviewConfirm(null)}
       />
     </div>
   );

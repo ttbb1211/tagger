@@ -315,6 +315,29 @@ func TestLibrarySwitchQueuesSafeBackgroundJob(t *testing.T) {
 	}
 }
 
+// A review job is durable UI state, not an executing file mutation. A leftover
+// review must never lock the library switcher: the user has to be able to move
+// to another root and discard the orphaned review from the task center.
+func TestLibrarySwitchIgnoresPendingReviewJobs(t *testing.T) {
+	s := newTestServer(t)
+	manager := jobs.New(s.store)
+	s.SetJobManager(manager)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "next.mp3"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Enqueue(context.Background(), domain.Job{
+		Kind: domain.JobMatch, State: domain.JobReview, Title: "批量抓取元数据", Detail: "等待审核", Total: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"path":"` + strings.ReplaceAll(root, `\`, `\\`) + `"}`)
+	response := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/libraries/"+s.library.Library().ID+"/switch", &ut.Body{Body: bytes.NewReader(body), Len: len(body)}, ut.Header{Key: "content-type", Value: "application/json"})
+	if response.Code != 202 || !containsJSON(response.Body.Bytes(), `"kind":"scan"`) {
+		t.Fatalf("switch with pending review = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestLibraryDeleteRequiresInactiveAndNeverTouchesFiles(t *testing.T) {
 	s := newTestServer(t)
 	manager := jobs.New(s.store)
@@ -1041,6 +1064,76 @@ func TestBatchMatchDefaultsToTwoCandidatesPerProvider(t *testing.T) {
 	if err != nil || !strings.Contains(job.Payload, `"limit":2`) {
 		t.Fatalf("job=%#v err=%v", job, err)
 	}
+}
+
+// 一个未完成索引的曲目（draft 正在索引 / error 解析失败）不能锁死整个目录的批量抓取：
+// createMatchJob 应该把它跳过、只把可抓取的曲目排进任务；全部不可用时才拒绝，
+// 避免静默创建一个 0 曲目任务。
+func TestBatchMatchSkipsUnindexedTracks(t *testing.T) {
+	s := newTestServer(t)
+	s.SetJobManager(jobs.New(s.store))
+	// reconcile 只登记文件、不读标签，因此新文件会停在 draft（未完成索引）状态。
+	album := filepath.Join(s.library.Root(), "New Album")
+	if err := os.MkdirAll(album, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(album, "Draft.flac"), []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reconcileBody := []byte(`{"folderPath":"New Album"}`)
+	reconciled := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/libraries/"+s.library.Library().ID+"/reconcile",
+		&ut.Body{Body: bytes.NewReader(reconcileBody), Len: len(reconcileBody)}, ut.Header{Key: "content-type", Value: "application/json"})
+	if reconciled.Code != 200 {
+		t.Fatalf("reconcile = %d %s", reconciled.Code, reconciled.Body.String())
+	}
+	draftID := firstTrackID(t, s, "?q=Draft")
+	indexedID := firstTrackID(t, s, "?q=Alpha")
+
+	mixedBody := []byte(`{"trackIds":["` + indexedID + `","` + draftID + `"],"providerIds":[]}`)
+	mixed := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/matches/tracks/batch",
+		&ut.Body{Body: bytes.NewReader(mixedBody), Len: len(mixedBody)}, ut.Header{Key: "content-type", Value: "application/json"})
+	var jobEnvelope struct {
+		Data struct {
+			ID    string `json:"id"`
+			Total int    `json:"total"`
+		} `json:"data"`
+	}
+	if mixed.Code != 202 || json.Unmarshal(mixed.Body.Bytes(), &jobEnvelope) != nil {
+		t.Fatalf("mixed batch = %d %s", mixed.Code, mixed.Body.String())
+	}
+	if jobEnvelope.Data.Total != 1 {
+		t.Fatalf("mixed batch should queue only the indexed track: %s", mixed.Body.String())
+	}
+	job, err := s.store.Job(context.Background(), jobEnvelope.Data.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(job.Payload, indexedID) || strings.Contains(job.Payload, draftID) {
+		t.Fatalf("payload should drop the unindexed track: %s", job.Payload)
+	}
+
+	onlyDraftBody := []byte(`{"trackIds":["` + draftID + `"],"providerIds":[]}`)
+	rejected := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/matches/tracks/batch",
+		&ut.Body{Body: bytes.NewReader(onlyDraftBody), Len: len(onlyDraftBody)}, ut.Header{Key: "content-type", Value: "application/json"})
+	if rejected.Code != 409 || !containsJSON(rejected.Body.Bytes(), `"code":"track_not_indexed"`) {
+		t.Fatalf("all-unindexed batch = %d %s", rejected.Code, rejected.Body.String())
+	}
+}
+
+func firstTrackID(t *testing.T, s *Server, query string) string {
+	t.Helper()
+	response := ut.PerformRequest(s.h.Engine, "GET", "/api/v1/tracks"+query, nil)
+	var envelope struct {
+		Data struct {
+			Tracks []struct {
+				ID string `json:"id"`
+			} `json:"tracks"`
+		} `json:"data"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &envelope) != nil || len(envelope.Data.Tracks) == 0 {
+		t.Fatalf("tracks%s = %d %s", query, response.Code, response.Body.String())
+	}
+	return envelope.Data.Tracks[0].ID
 }
 
 func TestProviderSettingsAndConnectionTestAPI(t *testing.T) {

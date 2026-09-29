@@ -21,6 +21,11 @@ interface TrackListProps {
   restoreStateFrom?: StateSnapshot;
   initialScrollTop?: number;
   onViewportState?: (state: StateSnapshot) => void;
+  // 解析失败（syncState === 'error'）的曲目不能参与任何批量操作，行内给一个
+  // 重试入口，否则用户只能看到一个红图标，不知道原因也无法自救。
+  onRetryParse?: (track: Track) => void;
+  // 底部选择浮层会盖住列表最后几行，选中时在列表尾部留出等高空白。
+  bottomSpacer?: number;
 }
 
 const healthLabel: Record<Track['health'], string> = {
@@ -44,6 +49,7 @@ const TrackRow = memo(function TrackRow({
   selected,
   onSelect,
   onToggle,
+  onRetryParse,
 }: {
   track: Track;
   showGeneratedCovers?: boolean;
@@ -51,6 +57,7 @@ const TrackRow = memo(function TrackRow({
   selected: boolean;
   onSelect: () => void;
   onToggle: () => void;
+  onRetryParse?: (track: Track) => void;
 }) {
   const hint = unambiguousHint(track);
   const displayTitle = track.title || hint?.title || track.fileName;
@@ -101,7 +108,16 @@ const TrackRow = memo(function TrackRow({
 		{track.syncState === 'draft' ? (
 		  <span title="正在索引"><LoaderCircle size={14} className="spin" /></span>
 		) : track.syncState === 'error' ? (
-		  <span title="索引失败"><AlertCircle size={14} /></span>
+		  <button
+		    type="button"
+		    className="track-retry"
+		    title={onRetryParse ? '标签解析失败，点击重新解析' : '标签解析失败'}
+		    aria-label={`重新解析 ${displayTitle}`}
+		    disabled={!onRetryParse}
+		    onClick={(event) => { event.stopPropagation(); onRetryParse?.(track); }}
+		  >
+		    <AlertCircle size={14} />
+		  </button>
 		) : track.health !== 'complete' && (
 		  <span title={healthLabel[track.health]}><AlertCircle size={14} /></span>
 		)}
@@ -128,6 +144,8 @@ export function TrackList({
   restoreStateFrom,
   initialScrollTop,
   onViewportState,
+  onRetryParse,
+  bottomSpacer = 0,
 }: TrackListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const viewportStateRef = useRef(onViewportState);
@@ -168,7 +186,12 @@ export function TrackList({
           endReached={() => {
             if (hasMore && !loadingMore) onEndReached?.();
           }}
-          components={{Footer: () => loadingMore ? <div className="track-list-footer">正在加载更多曲目…</div> : hasMore ? <div className="track-list-footer">继续滚动加载更多</div> : null}}
+          components={{Footer: () => (
+            <>
+              {loadingMore ? <div className="track-list-footer">正在加载更多曲目…</div> : hasMore ? <div className="track-list-footer">继续滚动加载更多</div> : null}
+              {bottomSpacer > 0 && <div style={{height: bottomSpacer}} aria-hidden="true" />}
+            </>
+          )}}
           itemContent={(_, track) => (
             <TrackRow
               track={track}
@@ -177,6 +200,7 @@ export function TrackList({
               selected={selectedIds.has(track.id)}
               onSelect={() => onSelectTrack(track)}
               onToggle={() => onToggleTrack(track.id)}
+              onRetryParse={onRetryParse}
             />
           )}
         />

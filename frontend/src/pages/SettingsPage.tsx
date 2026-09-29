@@ -658,7 +658,7 @@ export function SettingsPage({onNotice, showGeneratedCovers, onShowGeneratedCove
               </div>
               <div className="directory-probe-formats">{Object.entries(directoryProbe.formats).map(([format, count]) => <span key={format}>{format.toUpperCase()} <strong>{count}</strong></span>)}</div>
               {(directoryProbe.warnings?.length ?? 0) > 0 && <div className="directory-probe-warnings">{directoryProbe.warnings!.map((warning) => <p key={warning}><CircleAlert size={13} /> {warning}</p>)}</div>}
-              <small>添加或切换会排队扫描并更新当前曲库；有运行中或待审核任务时会被拒绝。未显式提供 <code>--music-dir</code> 时，重启会恢复最近一次选择。</small>
+              <small>添加或切换会排队扫描并更新当前曲库；有运行中的扫描或写入任务时会被拒绝，待审核任务不再阻止切换。未显式提供 <code>--music-dir</code> 时，重启会恢复最近一次选择。</small>
               <button className="primary-button" type="button" disabled={!directoryProbe.readable || directorySwitching} onClick={() => void switchActiveLibrary()}>{directorySwitching ? <LoaderCircle size={14} className="spin" /> : <FolderCog size={14} />} {directorySwitching ? '处理中…' : '添加并切换到此目录'}</button>
             </div>
           )}

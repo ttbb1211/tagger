@@ -507,18 +507,26 @@ type libraryProbeRequest struct {
 	Path string `json:"path"`
 }
 
+// rejectLibraryMutation guards the library root against changes while a job is
+// actually touching the filesystem.
+//
+// It deliberately uses HasBlockingFileWork instead of HasActive: a review job
+// is durable UI state, not an executing file mutation. A stale review left over
+// from an earlier session must never lock the library switcher — the user has to
+// be able to move to another root, and the orphaned review stays listed in the
+// task center where it can be discarded.
 func (s *Server) rejectLibraryMutation(ctx context.Context, c *app.RequestContext) bool {
 	if s.jobs == nil {
 		s.writeError(c, consts.StatusServiceUnavailable, "job_unavailable", "曲库任务队列尚未启用")
 		return true
 	}
-	active, err := s.jobs.HasActive(ctx)
+	active, err := s.jobs.HasBlockingFileWork(ctx)
 	if err != nil {
 		s.writeError(c, consts.StatusInternalServerError, "jobs_failed", err.Error())
 		return true
 	}
 	if active {
-		s.writeError(c, consts.StatusConflict, "library_switch_busy", "存在运行中或待审核任务，请完成或取消后再修改曲库")
+		s.writeError(c, consts.StatusConflict, "library_switch_busy", "存在运行中的扫描或写入任务，请完成或取消后再修改曲库")
 		return true
 	}
 	return false
@@ -1080,12 +1088,27 @@ func (s *Server) handleMatchBatch(ctx context.Context, c *app.RequestContext) {
 		s.writeError(c, consts.StatusNotFound, "track_not_found", err.Error())
 		return
 	}
+	// 未完成索引的曲目（draft 正在索引 / error 解析失败）不能参与抓取：worker 读不到
+	// 内嵌标签，只能靠文件名猜。这里**跳过**它们而不是整批 409 —— 一个永久解析失败
+	// 的文件不应该让整个目录的批量补全失效。前端会在确认框里如实报出跳过了哪几首；
+	// 这里保留兜底过滤，避免其它入口（CLI、旧前端）再撞同一堵墙。
+	indexed := make(map[string]struct{}, len(tracks))
 	for _, track := range tracks {
-		if track.SyncState != "" && track.SyncState != domain.SyncIndexed {
-			s.writeError(c, consts.StatusConflict, "track_not_indexed", "曲目仍在索引，请稍后重试")
-			return
+		if track.SyncState == "" || track.SyncState == domain.SyncIndexed {
+			indexed[track.ID] = struct{}{}
 		}
 	}
+	if len(indexed) == 0 {
+		s.writeError(c, consts.StatusConflict, "track_not_indexed", "所选曲目都未完成索引，暂时无法抓取元数据")
+		return
+	}
+	eligible := make([]string, 0, len(request.TrackIDs))
+	for _, id := range request.TrackIDs {
+		if _, ok := indexed[id]; ok {
+			eligible = append(eligible, id)
+		}
+	}
+	request.TrackIDs = eligible
 	payload, _ := json.Marshal(request)
 	job, err := s.jobs.Enqueue(ctx, domain.Job{Kind: domain.JobMatch, LibraryID: s.library.Library().ID, Title: "批量抓取元数据", Detail: "等待匹配 worker", Total: len(request.TrackIDs), Payload: string(payload)})
 	if err != nil {
