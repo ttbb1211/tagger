@@ -52,8 +52,6 @@ jobs:
 
   build_windows_amd64:
     name: Build windows/amd64
-    needs:
-      - create_release
     runs-on: windows-latest
     permissions:
       contents: read
