@@ -1,4 +1,4 @@
-# Tagger v1.5.0
+# Tagger v1.5.1
 
 本仓库是 [Ericwyn/tagger](https://github.com/Ericwyn/tagger) 的 fork（`ttbb1211/tagger`），面向中文音乐库整理：整轨 CUE 专辑、中文数据源、歌词 `.lrc`、简体转换等。
 
@@ -6,20 +6,24 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `tagger_setup_1.5.0_windows_amd64.exe` | Windows x86_64 **安装包**（向导可选音乐库目录，装完自动启动） |
-| `tagger_1.5.0_windows_amd64.zip` | Windows x86_64 **便携版**（解压即用，双击 `tagger.exe`） |
-| `tagger_1.5.0_windows_amd64.zip.sha256` | 便携包的 SHA-256 校验值 |
+| `tagger_setup_1.5.1_windows_amd64.exe` | Windows x86_64 **安装包**（向导可选音乐库目录，装完自动启动） |
+| `tagger_1.5.1_windows_amd64.zip` | Windows x86_64 **便携版**（解压即用，双击 `tagger.exe`） |
+| `tagger_1.5.1_windows_amd64.zip.sha256` | 便携包的 SHA-256 校验值 |
 
 Windows 版双击后弹出 WebView2 原生窗口，关窗口即退出；也可 `tagger.exe -ui=browser` 用浏览器打开、`-ui=server` 纯后台服务（默认 `127.0.0.1:8080`）。
 
 Linux / macOS 暂无预编译包，请用源码构建：
 
 ```bash
-make build VERSION=1.5.0     # 产物 dist/tagger
-docker build --build-arg VERSION=1.5.0 -t my-tagger .
+make build VERSION=1.5.1     # 产物 dist/tagger
+docker build --build-arg VERSION=1.5.1 -t my-tagger .
 ```
 
-> 版本号由构建注入（`-ldflags -X .../internal/version.Version=`）。界面顶栏与曲库页底部会显示 `v1.5.0`，设置页「系统信息」同样可查。
+> 版本号由构建注入（`-ldflags -X .../internal/version.Version=`）。界面顶栏与曲库页底部会显示 `v1.5.1`，设置页「系统信息」同样可查。
+
+## v1.5.1 主要变化
+
+- **卸载可选清理用户数据**：安装包卸载时新增「同时删除所有用户数据（曲库索引/设置，不可恢复）」选项，**默认不勾**——正常卸载保留 `%LOCALAPPDATA%\TaggerData`（曲库索引与设置，重装后可直接沿用）；勾选才彻底清除。此前卸载完全不删用户数据，重装 Windows 后旧记录仍在。
 
 ## v1.5.0 主要变化
 
