@@ -22,6 +22,7 @@ import {TrackInspector} from '@/components/library/TrackInspector';
 import {TrackList} from '@/components/library/TrackList';
 import {TagSnapshotPanel, trackToPatch, type SnapshotUpdate} from '@/components/library/TagSnapshotPanel';
 import {ConfirmDialog} from '@/components/ConfirmDialog';
+import {albumGroupKey} from '@/lib/trackGroups';
 import {cn} from '@/lib/utils';
 import {
   apiReadMode,
@@ -46,7 +47,7 @@ import {
   waitForJob,
   writeLyricsSidecar,
 } from '@/api';
-import {defaultBatchTrackLimit, type BatchArtworkInput, type CandidateSearchQuery, type LibrarySummary, type MatchCandidate, type OrganizeMode, type RestoreDraftRequest, type Track, type TrackFormat, type TrackPatch, type TrackQuery, type TrackSort, type UpdateProvenance} from '@/types';
+import {defaultBatchTrackLimit, type BatchArtworkInput, type CandidateSearchQuery, type Job, type LibrarySummary, type MatchCandidate, type OrganizeMode, type RestoreDraftRequest, type Track, type TrackFormat, type TrackPatch, type TrackQuery, type TrackSort, type UpdateProvenance} from '@/types';
 import type {StateSnapshot} from 'react-virtuoso';
 import {clearLibraryViewSnapshot, getLibraryViewSnapshot, setLibraryViewSnapshot} from '@/pages/libraryViewCache';
 
@@ -81,7 +82,7 @@ const filterLabels: Record<SidebarFilter, string> = {
 };
 
 type FormatFilter = 'all' | TrackFormat;
-type SortMode = 'album' | 'title' | 'modified' | 'format';
+type SortMode = 'album' | 'title' | 'modified' | 'format' | 'path';
 
 const formatLabels: Record<FormatFilter, string> = {
   all: '全部格式',
@@ -94,6 +95,7 @@ const formatLabels: Record<FormatFilter, string> = {
 
 const sortLabels: Record<SortMode, string> = {
   album: '专辑顺序',
+  path: '目录顺序',
   title: '标题顺序',
   modified: '最近修改',
   format: '格式顺序',
@@ -198,6 +200,18 @@ function skippedTracksLabel(tracks: Track[]): string {
   return `已跳过 ${tracks.length} 首未完成索引的曲目：${names}`;
 }
 
+// 「批量补全」按下后队列里可能还压着没跑完/没审完的抓取任务，再排一个就会出重复候选。
+// 这里只统计元数据抓取（match）且未终态的任务：waiting/running 是没跑完，review 是抓完了等审核。
+export function isPendingMatchJob(job: Pick<Job, 'kind' | 'state'>): boolean {
+  return job.kind === 'match' && (job.state === 'waiting' || job.state === 'running' || job.state === 'review');
+}
+
+export function pendingMatchJobsLabel(jobs: Pick<Job, 'state'>[]): string {
+  const active = jobs.filter((job) => job.state === 'waiting' || job.state === 'running').length;
+  const reviewing = jobs.filter((job) => job.state === 'review').length;
+  return [active > 0 ? `${active} 个排队/进行中` : '', reviewing > 0 ? `${reviewing} 个待审核` : ''].filter(Boolean).join('、');
+}
+
 export function shouldPollLibrary(library: Pick<LibrarySummary, 'watchMode' | 'watchState'>): boolean {
   return library.watchMode === 'poll' || library.watchState === 'polling' || (library.watchState === 'degraded' && library.watchMode !== 'events');
 }
@@ -267,7 +281,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [snapshotUndo, setSnapshotUndo] = useState<{before: Track[]; afterRevisions: Map<string, string>; afterTracks: Map<string, Track>}>();
-  const [reviewConfirm, setReviewConfirm] = useState<{ids: string[]; pending: boolean; skipped?: Track[]} | null>(null);
+  const [reviewConfirm, setReviewConfirm] = useState<{ids: string[]; pending: boolean; skipped?: Track[]; queuedMatch?: Job[]} | null>(null);
   const [restoreStateFrom, setRestoreStateFrom] = useState<StateSnapshot>();
   const [initialScrollTop, setInitialScrollTop] = useState<number>();
   const initializedRef = useRef(false);
@@ -1013,6 +1027,18 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
     }
   };
 
+  // 队列查询只是提示，失败不能挡住抓取流程（mock 模式没有真实队列，直接返回空）
+  const loadQueuedMatchJobs = async (): Promise<Job[] | undefined> => {
+    if (apiReadMode !== 'real') return undefined;
+    try {
+      const jobs = await listJobs();
+      const pending = jobs.filter(isPendingMatchJob);
+      return pending.length > 0 ? pending : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   const openReviewSelection = async () => {
     if (selectedIds.size > batchTrackLimit) {
       onNotice(`当前选择超过 ${batchTrackLimit} 首，请缩小范围后再批量补全`);
@@ -1031,7 +1057,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
       }
       setSelectedIds(new Set(resolved.tracks.map((track) => track.id)));
       setSelectedDetails(new Map(resolved.tracks.map((track) => [track.id, track])));
-      setReviewConfirm({ids: actionable.map((t) => t.id), pending: true, skipped: skipped.length > 0 ? skipped : undefined});
+      setReviewConfirm({ids: actionable.map((t) => t.id), pending: true, skipped: skipped.length > 0 ? skipped : undefined, queuedMatch: await loadQueuedMatchJobs()});
     } catch (error) {
       onNotice(trackOperationError(error, '批量补全曲目解析失败'));
     }
@@ -1226,8 +1252,16 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
     : (activeFolder ? library.folders.find((folder) => folder.id === activeFolder)?.name : undefined)
       || filterLabels[activeFilter];
 
+  // 选中母文件夹时右侧是整库平铺的长列表，标题只写「全部音乐」看不出范围有多大，
+  // 首屏若正好被一张专辑占满就会被误读成「只显示了这一张专辑」。
+  // 这里给标题补一个范围标识，并在副标题里带上目录数与已加载曲目覆盖的专辑数。
+  const scopeChip = !activeFolder && !activeFolderPath
+    ? '整个曲库'
+    : includeSubfolders ? '含子目录' : '仅当前目录';
+  const loadedAlbumCount = new Set(visibleTracks.map(albumGroupKey)).size;
+
   return (
-    <div className={cn('library-page', resizingLibrarySidebar && 'is-resizing-sidebar')}>
+    <div className={cn('library-page', resizingLibrarySidebar && 'is-resizing-sidebar', mobileInspector && 'is-inspector-open')}>
       <LibrarySidebar
         library={library}
         libraries={libraries}
@@ -1294,8 +1328,13 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
               <i>/</i>
               <strong title={currentLabel}>{currentLabel}</strong>
             </div>
-            <h1 title={currentLabel}>{currentLabel}</h1>
-            <p>{pageTotal} 首匹配曲目 · 已加载 {visibleTracks.length} 首</p>
+            {/* 范围标识放在 h1 之外：塞进 h1 会改掉标题的可访问名
+                （无障碍与测试都按「全部音乐」精确匹配标题）。 */}
+            <div className="titleline">
+              <h1 title={currentLabel}>{currentLabel}</h1>
+              <em className="scope-chip" title={`当前列表范围：${scopeChip}`}>{scopeChip}</em>
+            </div>
+            <p>{pageTotal} 首匹配曲目 · {library.folderCount} 个目录 · 已加载 {visibleTracks.length} 首（{loadedAlbumCount} 张专辑）</p>
           </div>
           <div className="workspace-actions">
             <div className="workspace-actions-inline">
@@ -1420,6 +1459,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
           initialScrollTop={initialScrollTop}
           onViewportState={(state) => { viewportStateRef.current = state; }}
           bottomSpacer={selectedIds.size > 0 ? 56 : 0}
+          albumGroups={sortMode === 'album'}
         />
 
 		<div className="workspace-foot">
@@ -1513,6 +1553,9 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
         description={reviewConfirm
           ? `本次将对 ${reviewConfirm.ids.length} 首曲目发起元数据抓取。${reviewConfirm.skipped && reviewConfirm.skipped.length > 0 ? skippedTracksLabel(reviewConfirm.skipped) : ''}`
           : ''}
+        warning={reviewConfirm?.queuedMatch && reviewConfirm.queuedMatch.length > 0
+          ? `队列里已有 ${reviewConfirm.queuedMatch.length} 个抓取任务（${pendingMatchJobsLabel(reviewConfirm.queuedMatch)}），确认后会再排一个，可能出现重复候选。可先去「任务」页处理。`
+          : undefined}
         confirmTone="primary"
         confirmLabel={reviewConfirm?.pending ? '开始抓取' : '确定'}
         onConfirm={() => {

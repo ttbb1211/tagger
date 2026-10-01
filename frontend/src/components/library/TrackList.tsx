@@ -1,8 +1,9 @@
-import {memo, useEffect, useRef} from 'react';
+import {memo, useEffect, useMemo, useRef} from 'react';
 import {Virtuoso, type StateSnapshot, type VirtuosoHandle} from 'react-virtuoso';
 import {AlertCircle, Check, ChevronDown, ListFilter, LoaderCircle, MoreHorizontal} from 'lucide-react';
 import {CoverArt} from '@/components/CoverArt';
 import {artworkURL} from '@/api';
+import {albumGroupCounts, albumGroupInfo, albumGroupKey} from '@/lib/trackGroups';
 import {cn, formatDuration} from '@/lib/utils';
 import type {Track} from '@/types';
 
@@ -26,6 +27,10 @@ interface TrackListProps {
   onRetryParse?: (track: Track) => void;
   // 底部选择浮层会盖住列表最后几行，选中时在列表尾部留出等高空白。
   bottomSpacer?: number;
+  // 仅在「专辑顺序」排序下开启：选中母文件夹后，整库曲目是一条平铺长列表，
+  // 首屏往往整屏都属于同一张专辑，极易被误读成「只显示了这一张专辑」。
+  // 开启后按专辑插入分组标题，让范围和专辑边界一眼可见。
+  albumGroups?: boolean;
 }
 
 const healthLabel: Record<Track['health'], string> = {
@@ -41,6 +46,19 @@ const healthLabel: Record<Track['health'], string> = {
 function unambiguousHint(track: Track): Track['tagHints'][number] | undefined {
   return track.tagHints.length === 1 ? track.tagHints[0] : undefined;
 }
+
+// 分组标题只做「划范围」，不参与选择：整批选取仍走表头全选与行内勾选，
+// 避免给批量写入引入第二套选中语义。
+const AlbumGroupHead = memo(function AlbumGroupHead({track, count}: {track: Track; count?: number}) {
+  const {album, artists} = albumGroupInfo(track);
+  return (
+    <div className="track-group-head" role="row" aria-label={`专辑 ${album || '未标记专辑'}`}>
+      <span className="track-group-album">{album || '未标记专辑'}</span>
+      {artists.length > 0 && <span className="track-group-artist">{artists.join(' / ')}</span>}
+      {typeof count === 'number' && count > 0 && <em>{count} 首</em>}
+    </div>
+  );
+});
 
 const TrackRow = memo(function TrackRow({
   track,
@@ -146,6 +164,7 @@ export function TrackList({
   onViewportState,
   onRetryParse,
   bottomSpacer = 0,
+  albumGroups = false,
 }: TrackListProps) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const viewportStateRef = useRef(onViewportState);
@@ -153,6 +172,7 @@ export function TrackList({
   useEffect(() => () => {
     virtuosoRef.current?.getState((state) => viewportStateRef.current?.(state));
   }, []);
+  const groupCounts = useMemo(() => (albumGroups ? albumGroupCounts(tracks) : undefined), [albumGroups, tracks]);
   const allSelected = resultSelectionActive || (tracks.length > 0 && tracks.every((track) => selectedIds.has(track.id)));
 
   return (
@@ -192,17 +212,26 @@ export function TrackList({
               {bottomSpacer > 0 && <div style={{height: bottomSpacer}} aria-hidden="true" />}
             </>
           )}}
-          itemContent={(_, track) => (
-            <TrackRow
-              track={track}
-              showGeneratedCovers={showGeneratedCovers}
-              active={track.id === activeTrackId}
-              selected={selectedIds.has(track.id)}
-              onSelect={() => onSelectTrack(track)}
-              onToggle={() => onToggleTrack(track.id)}
-              onRetryParse={onRetryParse}
-            />
-          )}
+          itemContent={(index, track) => {
+            // 分组标题挂在「该专辑第一首」这一项内部渲染，而不是往 data 里插伪元素：
+            // 索引与曲目一一对应，虚拟滚动的状态恢复、endReached 分页和全选计数都不受影响。
+            const previous = index > 0 ? tracks[index - 1] : undefined;
+            const startsAlbum = albumGroups && (!previous || albumGroupKey(previous) !== albumGroupKey(track));
+            return (
+              <>
+                {startsAlbum && <AlbumGroupHead track={track} count={groupCounts?.get(albumGroupKey(track))} />}
+                <TrackRow
+                  track={track}
+                  showGeneratedCovers={showGeneratedCovers}
+                  active={track.id === activeTrackId}
+                  selected={selectedIds.has(track.id)}
+                  onSelect={() => onSelectTrack(track)}
+                  onToggle={() => onToggleTrack(track.id)}
+                  onRetryParse={onRetryParse}
+                />
+              </>
+            );
+          }}
         />
       ) : (
         <div className="empty-state">

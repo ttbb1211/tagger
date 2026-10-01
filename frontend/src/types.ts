@@ -133,7 +133,7 @@ export interface LibraryReconcileResult {
   job?: Job;
 }
 
-export type TrackSort = 'album' | 'title' | 'modified' | 'format';
+export type TrackSort = 'album' | 'title' | 'modified' | 'format' | 'path';
 
 export interface TrackQuery {
   q?: string;

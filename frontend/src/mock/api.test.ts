@@ -74,4 +74,16 @@ describe('mock api', () => {
     await expect(listTrackPage({}, 'not-a-cursor', 1)).rejects.toThrow('invalid_track_cursor');
     await expect(resolveTracks({ids: [first.tracks[0].id]})).resolves.toEqual({tracks: [expect.objectContaining({id: first.tracks[0].id})], total: 1});
   });
+
+  it('accepts the folder order and keeps every folder in a single run', async () => {
+    // 「目录顺序」的语义就是同一目录的曲目连续出现（一个文件夹 = 一张专辑）。
+    const result = await listTrackPage({sort: 'path'}, '', 200);
+    expect(result.tracks.length).toBeGreaterThan(1);
+    const runs: string[] = [];
+    result.tracks.forEach((item) => {
+      const folder = item.relativePath.split('/').slice(0, -1).join('/');
+      if (runs[runs.length - 1] !== folder) runs.push(folder);
+    });
+    expect(new Set(runs).size).toBe(runs.length);
+  });
 });

@@ -1277,16 +1277,32 @@ button:disabled {
 
 .library-workspace {
   display: grid;
+  /* ★ 必须显式声明列：不写列时浏览器用隐式 auto 列，列宽下限 = 最宽那一行的 min-content。
+     实测 .track-toolbar 的 min-content 是 960px，于是左栏一拖宽（工作区 < 960px）整个工作区
+     就被撑到 960px —— 标题栏右对齐的「快速扫描/批量补全」与工具栏的「排序」被顶出工作区，
+     正好压在右侧详情列下面（2026-10-01 实测：工作区 873px 时标题栏被撑到 990px，按钮越界 93px）。
+     minmax(0, 1fr) 让列宽只跟容器走。 */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) 30px;
   min-width: 0;
   min-height: 0;
+  /* 兜底：任何一行算错宽度也不会横向溢到详情列上（原来只在 ≤1600 的媒体查询里加过） */
+  overflow: hidden;
+  /* 工具栏改为按「工作区宽度」折叠，见下方 @container 块 */
+  container-type: inline-size;
+  transition: padding-right 220ms ease;
   background: var(--paper);
+}
+
+.library-workspace > * {
+  min-width: 0;
 }
 
 .workspace-titlebar {
   display: flex;
   align-items: flex-start;
   gap: 13px;
+  min-width: 0;
   min-height: 112px;
   padding: 22px 24px 17px;
   border-bottom: 1px solid var(--line);
@@ -1294,6 +1310,44 @@ button:disabled {
 
 .workspace-titlebar > div:nth-child(2) {
   min-width: 0;
+}
+
+/* 标题、副标题、面包屑一律允许省略号收缩：宽度不够时优雅截断，
+   不再靠「把右侧按钮顶出去」来消化内容（那是 2026-10-01 遮挡问题的另一半成因）。 */
+.workspace-titlebar h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-titlebar p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-titlebar .titleline {
+  min-width: 0;
+}
+
+.workspace-titlebar .titleline h1 {
+  flex: 0 1 auto;
+}
+
+.workspace-titlebar .scope-chip {
+  flex: 0 0 auto;
+}
+
+.breadcrumb {
+  min-width: 0;
+}
+
+.breadcrumb span,
+.breadcrumb strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-titlebar h1,
@@ -1331,6 +1385,34 @@ button:disabled {
 
 .breadcrumb i {
   font-style: normal;
+}
+
+/* 标题与范围标识同行：标识必须留在 h1 之外，否则会污染标题的可访问名。 */
+.titleline {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+
+/* 标题右侧的范围标识：整库 / 仅当前目录 / 含子目录。
+   选中母文件夹时列表是整库平铺，没有它就看不出当前范围有多大。 */
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper-3) 60%, transparent);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .workspace-actions {
@@ -1639,6 +1721,45 @@ button:disabled {
   font-family: var(--mono);
   font-size: 11px;
   text-align: center;
+}
+
+/* 专辑分组标题（仅「专辑顺序」排序下出现）：把平铺长列表按专辑切开，
+   避免首屏整屏都是同一张专辑时被误读成「只显示了这张专辑」。 */
+.track-group-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 31px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper-3) 78%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.track-group-head .track-group-album {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-group-head .track-group-artist {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-group-head em {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-style: normal;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
 }
 
 .track-row {
@@ -6337,6 +6458,16 @@ button:disabled {
   line-height: 1.6;
 }
 
+/* 非阻断提醒：与 error 分开配色，避免把「队列里已有同类任务」误读成操作失败 */
+.confirm-dialog-warning {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-left: 3px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--ink);
+  font-size: 11px;
+}
+
 .confirm-dialog-error {
   margin-top: 9px;
   padding: 7px 9px;
@@ -7378,6 +7509,15 @@ button:disabled {
   .mobile-inspector-button {
     display: grid;
   }
+
+  /* ★ 详情在 ≤1600 是 fixed 浮层（宽 430px），打开时会盖住工作区右侧 ——
+     标题栏的「快速扫描/批量补全」正好在那里。让位比任凭遮挡好：
+     浮层打开时把工作区内容整体左移，按钮与排序始终可见可点。
+     两条选择器是同一件事的两种触发：JS 类 + :has()（浮层实际打开），互为兜底。 */
+  .library-page.is-inspector-open .library-workspace,
+  .library-page:has(> .track-inspector.is-mobile-open) .library-workspace {
+    padding-right: min(430px, 45vw);
+  }
 }
 
 @media (max-width: 1450px) {
@@ -7481,6 +7621,78 @@ button:disabled {
 
   .provider-grid {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ★ 工具栏按「工作区宽度」折叠（2026-10-01）。
+   原来只在视口 ≤1450 时折叠，但视口宽不代表工作区宽：窗口 1713px、左栏拖到 420px 时
+   工作区只剩 873px，6 个筛选控件横排的 min-content（实测 960px）撑破工作区。
+   容器查询认的是 .library-workspace 的实际宽度，比视口断点准确。
+   ⚠️ 规则与 @media (max-width:1450px) 里那套保持一致，改一处要同步另一处。
+   阈值 1000px：横排工具栏的 min-content 实测 960px，1000 以下才确实放不下。 */
+@container (max-width: 1000px) {
+  .track-toolbar {
+    position: relative;
+    flex-wrap: nowrap;
+    min-height: 54px;
+    overflow: visible;
+  }
+
+  .track-toolbar .toolbar-spacer {
+    display: none;
+  }
+
+  .track-toolbar .search-box {
+    flex: 1 1 auto;
+    order: 0;
+    min-width: 0;
+  }
+
+  .track-filter-shell {
+    display: block;
+  }
+
+  .track-filter-trigger {
+    display: inline-flex;
+  }
+
+  .track-filter-controls {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 8px);
+    right: 0;
+    display: none;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    min-width: min(360px, calc(100cqw - 28px));
+    padding: 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--paper-2);
+    box-shadow: var(--shadow);
+  }
+
+  .track-filter-shell.is-open .track-filter-controls {
+    display: grid;
+  }
+
+  .track-filter-controls > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .track-filter-controls .toolbar-button {
+    justify-content: flex-start;
+  }
+
+  .track-filter-controls .toolbar-filter select {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .track-filter-controls .toolbar-toggle {
+    justify-content: flex-start;
   }
 }
 

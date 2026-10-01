@@ -69,9 +69,15 @@ function matchesTrackQuery(track: Track, query: TrackQuery): boolean {
 
 function compareMockTracks(left: Track, right: Track, sort: TrackSort = 'album'): number {
   const text = (value: string) => value.trim().toLocaleLowerCase();
+  const folder = (track: Track) => track.relativePath.split('/').slice(0, -1).join('/').toLocaleLowerCase();
   if (sort === 'title') return text(left.title || left.fileName).localeCompare(text(right.title || right.fileName), 'zh-CN') || left.relativePath.localeCompare(right.relativePath);
   if (sort === 'modified') return right.modifiedAt.localeCompare(left.modifiedAt) || left.relativePath.localeCompare(right.relativePath);
   if (sort === 'format') return left.format.localeCompare(right.format) || text(left.title).localeCompare(text(right.title), 'zh-CN') || left.relativePath.localeCompare(right.relativePath);
+  if (sort === 'path') return folder(left).localeCompare(folder(right), 'zh-CN')
+    || (left.discNumber ?? 0) - (right.discNumber ?? 0)
+    || (left.trackNumber ?? 0) - (right.trackNumber ?? 0)
+    || text(left.title || left.fileName).localeCompare(text(right.title || right.fileName), 'zh-CN')
+    || left.relativePath.localeCompare(right.relativePath);
   return text(left.album).localeCompare(text(right.album), 'zh-CN')
     || (left.discNumber ?? 0) - (right.discNumber ?? 0)
     || (left.trackNumber ?? 0) - (right.trackNumber ?? 0)
@@ -86,7 +92,7 @@ function filteredMockTracks(query: TrackQuery): Track[] {
 export async function listTrackPage(query: TrackQuery = {}, cursor = '', limit = 100): Promise<TrackPage> {
   await wait();
   if (limit < 0 || limit > 200) throw new Error('invalid_track_query');
-  if (query.sort && !(['album', 'title', 'modified', 'format'] as TrackSort[]).includes(query.sort)) throw new Error('invalid_track_query');
+  if (query.sort && !(['album', 'title', 'modified', 'format', 'path'] as TrackSort[]).includes(query.sort)) throw new Error('invalid_track_query');
   if (query.health && !(['complete', 'tag-compatibility', 'missing-artwork', 'missing-lyrics', 'needs-review', 'parse-error', 'missing'] as Track['health'][]).includes(query.health)) throw new Error('invalid_track_query');
   if (query.format && !(['mp3', 'flac', 'wav'] as Track['format'][]).includes(query.format)) throw new Error('invalid_track_query');
   const pageSize = Math.max(1, Math.min(limit || 100, 200));

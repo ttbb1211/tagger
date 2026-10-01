@@ -27,6 +27,9 @@ const (
 	TrackSortTitle    TrackSort = "title"
 	TrackSortModified TrackSort = "modified"
 	TrackSortFormat   TrackSort = "format"
+	// TrackSortPath 按物理目录排序。整轨 CUE 专辑的目录名就是专辑名，
+	// 用它浏览脏库时能按「一个文件夹 = 一张专辑」的直觉走，不受专辑标签是否已刮削影响。
+	TrackSortPath TrackSort = "path"
 )
 
 // TrackQuery is shared by paginated browsing and bounded batch selection.
@@ -72,7 +75,7 @@ func NormalizeTrackQuery(query TrackQuery) (TrackQuery, error) {
 		query.Sort = TrackSortAlbum
 	}
 	switch query.Sort {
-	case TrackSortAlbum, TrackSortTitle, TrackSortModified, TrackSortFormat:
+	case TrackSortAlbum, TrackSortTitle, TrackSortModified, TrackSortFormat, TrackSortPath:
 	default:
 		return TrackQuery{}, fmt.Errorf("%w: unsupported sort %q", ErrInvalidTrackQuery, query.Sort)
 	}
@@ -201,6 +204,21 @@ func compareTrack(left, right domain.Track, mode TrackSort) int {
 		}
 	case TrackSortFormat:
 		if result := compareText(string(left.Format), string(right.Format)); result != 0 {
+			return result
+		}
+		if result := compareText(firstTrackText(left.Title, left.FileName), firstTrackText(right.Title, right.FileName)); result != 0 {
+			return result
+		}
+	case TrackSortPath:
+		// 先按所在目录（= 专辑文件夹），再按碟号/轨号。
+		// 轨号不能省：整轨 CUE 的虚拟路径是 `<音频>#cue:10`，纯字符串比较会把第 10 首排到第 2 首前面。
+		if result := compareText(filepath.ToSlash(filepath.Dir(left.RelativePath)), filepath.ToSlash(filepath.Dir(right.RelativePath))); result != 0 {
+			return result
+		}
+		if result := compareOptionalInt(left.DiscNumber, right.DiscNumber); result != 0 {
+			return result
+		}
+		if result := compareOptionalInt(left.TrackNumber, right.TrackNumber); result != 0 {
 			return result
 		}
 		if result := compareText(firstTrackText(left.Title, left.FileName), firstTrackText(right.Title, right.FileName)); result != 0 {

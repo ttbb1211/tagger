@@ -14,11 +14,13 @@ interface ConfirmDialogProps {
   confirmTone?: 'danger' | 'primary';
   busy?: boolean;
   error?: string;
+  /** 非阻断的提醒（例如队列里已有同类任务）。与 error 分开：这里不表示操作失败。 */
+  warning?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export function ConfirmDialog({open, title, description, confirmLabel, cancelLabel = '取消', confirmTone = 'danger', busy = false, error, onConfirm, onCancel}: ConfirmDialogProps) {
+export function ConfirmDialog({open, title, description, confirmLabel, cancelLabel = '取消', confirmTone = 'danger', busy = false, error, warning, onConfirm, onCancel}: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -40,6 +42,7 @@ export function ConfirmDialog({open, title, description, confirmLabel, cancelLab
         <div className="confirm-dialog-copy">
           <div className="confirm-dialog-head"><h2 id="confirm-dialog-title">{title}</h2><button className="icon-button" type="button" title="关闭确认框" onClick={onCancel} disabled={busy}><X size={17} /></button></div>
           <p id="confirm-dialog-description">{description}</p>
+          {warning && <div className="confirm-dialog-warning">{warning}</div>}
           {error && <div className="confirm-dialog-error">{error}</div>}
           <div className="confirm-dialog-actions">
             <button className="secondary-button" type="button" ref={cancelRef} onClick={onCancel} disabled={busy}>{cancelLabel}</button>

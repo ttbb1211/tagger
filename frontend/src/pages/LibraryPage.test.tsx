@@ -148,6 +148,21 @@ describe('LibraryPage active library boundary', () => {
     expect(await screen.findByText('已加载 2 / 共 2 首')).toBeInTheDocument();
   });
 
+  it('marks the whole-library scope and album breakdown so a flat list is not read as one album', async () => {
+    api.listLibraries.mockResolvedValue([{...firstLibrary, trackCount: 2, folderCount: 3}]);
+    installTrackPageSource([
+      {...firstTrack, album: '甲专辑', albumArtists: ['歌手甲']},
+      {...secondTrack, album: '乙专辑', albumArtists: ['歌手乙']},
+    ]);
+    const {container} = render(<LibraryPage onOpenReview={vi.fn()} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
+
+    expect(await screen.findByText('整个曲库')).toBeInTheDocument();
+    expect(screen.getByText('2 首匹配曲目 · 3 个目录 · 已加载 2 首（2 张专辑）')).toBeInTheDocument();
+    // 范围标识必须在 h1 之外，否则会污染标题的可访问名（App.test 按标题精确匹配）。
+    expect(container.querySelector('h1 .scope-chip')).toBeNull();
+    expect(container.querySelector('.titleline > h1')?.textContent).toBe('全部音乐');
+  });
+
   it('applies former smart filters from the list toolbar', async () => {
     const user = userEvent.setup();
     const statusLibrary: LibrarySummary = {...firstLibrary, trackCount: 2};

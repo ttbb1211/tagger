@@ -64,3 +64,49 @@ describe('TrackList 未索引曲目', () => {
     expect(container.querySelector('div[aria-hidden="true"]')).toHaveStyle({height: '84px'});
   });
 });
+
+function albumTrack(id: string, album: string, title: string, albumArtists: string[] = ['测试歌手']): Track {
+  return {...indexedTrack, id, album, albumArtists, title, fileName: `${id}.flac`};
+}
+
+describe('TrackList 专辑分组', () => {
+  // 选中母文件夹时右侧是整库平铺长列表，首屏常被一张专辑占满 —— 分组标题是
+  // 区分「这是整库」与「这只是一张专辑」的唯一视觉线索，故单独锁住。
+  it('在专辑顺序下为每张专辑插入分组标题并带上曲目数', () => {
+    const {container} = renderList([
+      albumTrack('a1', '甲专辑', '甲一'),
+      albumTrack('a2', '甲专辑', '甲二'),
+      albumTrack('b1', '乙专辑', '乙一'),
+    ], {albumGroups: true});
+
+    const heads = [...container.querySelectorAll('.track-group-head')];
+    expect(heads).toHaveLength(2);
+    expect(heads[0]).toHaveTextContent('甲专辑');
+    expect(heads[0]).toHaveTextContent('测试歌手');
+    expect(heads[0]).toHaveTextContent('2 首');
+    expect(heads[1]).toHaveTextContent('乙专辑');
+    expect(heads[1]).toHaveTextContent('1 首');
+  });
+
+  it('非专辑排序（未开启分组）时不插入任何分组标题', () => {
+    const {container} = renderList([albumTrack('a1', '甲专辑', '甲一'), albumTrack('b1', '乙专辑', '乙一')]);
+    expect(container.querySelectorAll('.track-group-head')).toHaveLength(0);
+  });
+
+  it('专辑同名但专辑艺术家不同则各成一组，避免标题张冠李戴', () => {
+    const {container} = renderList([
+      albumTrack('c1', '合辑', '一', ['歌手甲']),
+      albumTrack('c2', '合辑', '二', ['歌手乙']),
+    ], {albumGroups: true});
+
+    const heads = [...container.querySelectorAll('.track-group-head')];
+    expect(heads).toHaveLength(2);
+    expect(heads[0]).toHaveTextContent('歌手甲');
+    expect(heads[1]).toHaveTextContent('歌手乙');
+  });
+
+  it('缺专辑名时给出「未标记专辑」占位，不显示空白标题', () => {
+    const {container} = renderList([albumTrack('d1', '', '无专辑曲目')], {albumGroups: true});
+    expect(container.querySelector('.track-group-head')).toHaveTextContent('未标记专辑');
+  });
+});
