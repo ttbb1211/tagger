@@ -162,7 +162,10 @@ export function TrackInspector({
   const [fallbackPlaying, setFallbackPlaying] = useState(false);
   const [deleteArtworkArmed, setDeleteArtworkArmed] = useState(false);
   const [artworkMaxSize, setArtworkMaxSize] = useState(0);
-  const [writeTag, setWriteTag] = useState(true);
+  // 「写入 cue 标签」不写死默认值：整轨虚拟轨道上若本次只处理歌词（没动任何元数据），
+  // 默认不勾 —— 避免「只想抓歌词」却顺带把整条 cue 标签整体重写一遍。
+  // null = 用户没手动干预，按场景自动取值；用户点过就以手动值为准。
+  const [writeTagOverride, setWriteTagOverride] = useState<boolean | null>(null);
   const [exportLrc, setExportLrc] = useState(false);
   const [extendedOpen, setExtendedOpen] = useState(false);
   const [rawTags, setRawTags] = useState<Record<string, string[]> | null>(null);
@@ -178,7 +181,7 @@ export function TrackInspector({
 	setFallbackPlaying(false);
 	setDeleteArtworkArmed(false);
 	setArtworkMaxSize(0);
-	setWriteTag(true);
+	setWriteTagOverride(null);
 	setExportLrc(false);
 	setExtendedOpen(false);
 	setRawTags(null);
@@ -222,6 +225,11 @@ export function TrackInspector({
     ];
     return names.filter(([key]) => JSON.stringify(draft[key]) !== JSON.stringify(original[key]));
   }, [draft, original]);
+
+  // 本次改动是否「只处理歌词」（含什么都没改）：只要动过任一元数据字段，就回到默认勾选 ——
+  // 该复选框只在歌词页签渲染，若在整轨上默认不勾，元数据将无从保存。
+  const lyricsOnlyChange = !changedFields.some(([key]) => key !== 'lyrics');
+  const writeTag = writeTagOverride ?? !(cueVirtual && lyricsOnlyChange);
 
   if (!track || !draft) {
     return (
@@ -668,7 +676,7 @@ export function TrackInspector({
             />
             <div className="lyrics-options">
               <label>
-                <input type="checkbox" checked={writeTag} onChange={(event) => setWriteTag(event.target.checked)} />
+                <input type="checkbox" checked={writeTag} onChange={(event) => setWriteTagOverride(event.target.checked)} />
                 {cueVirtual ? '写入 cue 标签（标题 / 艺术家等）' : '写入音频标签（内嵌）'}
                 <small>
                   {cueVirtual
@@ -690,7 +698,10 @@ export function TrackInspector({
                 </small>
               </label>
             </div>
-            <p className="format-note">保存时先写同目录临时副本，重读验证后再原子替换原文件；歌词清空且已存在 .lrc 时会一并删除该文件。</p>
+            <p className="format-note">
+              保存时先写同目录临时副本，重读验证后再原子替换原文件；歌词清空且已存在 .lrc 时会一并删除该文件。
+              {cueVirtual && !writeTag && !exportLrc && ' 当前两项都未勾选：保存会提示「未选择任何写入方式」，本次改动不会落盘。'}
+            </p>
           </div>
         )}
 

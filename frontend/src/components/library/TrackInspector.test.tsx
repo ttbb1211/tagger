@@ -152,7 +152,8 @@ describe('TrackInspector', () => {
     );
 
     await user.click(screen.getByRole('tab', {name: '歌词'}));
-    expect(screen.getByRole('checkbox', {name: /写入 cue 标签/})).toBeChecked();
+    // 整轨 + 只处理歌词：不预勾「写入 cue 标签」，避免顺带重写整条 cue 标签
+    expect(screen.getByRole('checkbox', {name: /写入 cue 标签/})).not.toBeChecked();
     const lrc = screen.getByRole('checkbox', {name: /导出 \.lrc 歌词文件/});
     expect(lrc).not.toBeChecked();
     expect(lrc).not.toBeDisabled();
@@ -161,7 +162,75 @@ describe('TrackInspector', () => {
     await user.click(screen.getByRole('button', {name: '保存修改'}));
     await user.click(screen.getByRole('button', {name: '确认写入'}));
 
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: true, exportLrc: false});
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: false, exportLrc: false});
+  });
+
+  it('keeps the cue tag write checked on whole-track items once metadata is edited', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const cueTrack: Track = {
+      ...seedTracks[0],
+      cuePath: 'Album/整轨.flac',
+      startOffsetSeconds: 120,
+      endOffsetSeconds: 300,
+      durationSeconds: 180,
+    };
+    render(
+      <TrackInspector
+        track={cueTrack}
+        saving={false}
+        mobileOpen
+        onCloseMobile={() => {}}
+        onSearch={() => {}}
+        onSave={onSave}
+        onArtworkChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    // 动了元数据（标题）→ 复选框必须回到勾选，否则整轨的元数据将无从保存
+    fireEvent.change(screen.getByLabelText('标题'), {target: {value: '再回首（整轨）'}});
+    await user.click(screen.getByRole('tab', {name: '歌词'}));
+    expect(screen.getByRole('checkbox', {name: /写入 cue 标签/})).toBeChecked();
+
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await user.click(screen.getByRole('button', {name: '确认写入'}));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({title: '再回首（整轨）'}), {writeTag: true, exportLrc: false});
+  });
+
+  it('honours a manual toggle of the cue tag write on whole-track items', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const cueTrack: Track = {
+      ...seedTracks[0],
+      cuePath: 'Album/整轨.flac',
+      startOffsetSeconds: 120,
+      endOffsetSeconds: 300,
+      durationSeconds: 180,
+    };
+    render(
+      <TrackInspector
+        track={cueTrack}
+        saving={false}
+        mobileOpen
+        onCloseMobile={() => {}}
+        onSearch={() => {}}
+        onSave={onSave}
+        onArtworkChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', {name: '歌词'}));
+    const writeCue = screen.getByRole('checkbox', {name: /写入 cue 标签/});
+    expect(writeCue).not.toBeChecked();
+    await user.click(writeCue);
+    expect(writeCue).toBeChecked();
+
+    fireEvent.change(screen.getByPlaceholderText(/在这里输入歌词/), {target: {value: '[00:03.00] cue lyrics'}});
+    await user.click(screen.getByRole('button', {name: '保存修改'}));
+    await user.click(screen.getByRole('button', {name: '确认写入'}));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:03.00] cue lyrics'}), {writeTag: true, exportLrc: false});
   });
 
   it('exports .lrc for cue virtual tracks when the user opts in', async () => {
@@ -195,7 +264,7 @@ describe('TrackInspector', () => {
     await user.click(screen.getByRole('button', {name: '保存修改'}));
     await user.click(screen.getByRole('button', {name: '确认写入'}));
 
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: true, exportLrc: true});
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({lyrics: '[00:02.00] cue lyrics'}), {writeTag: false, exportLrc: true});
   });
 
   it('edits extended embedded fields without changing unknown raw tags', async () => {
