@@ -947,43 +947,60 @@ type cueBind struct {
 	cueRel string
 }
 
-// bindCueSheets 为发现到的整轨音频反向探测同名 .cue（不要求 cue 出现在
-// 发现列表里——watcher 触发的局部扫描可能只带音频目标）。配对成功返回
-// 音频绝对路径 -> 绑定；解析失败的 cue 记入 warnings，对应音频退回普通
-// 单文件索引（与旧行为一致）。
+// bindCueSheets 为发现到的整轨音频配对 .cue（不要求 cue 出现在发现列表里
+// —— watcher 触发的局部扫描可能只带音频目标）。配对成功返回音频绝对路径
+// -> 绑定；解析失败的 cue 记入 warnings，对应音频退回普通单文件索引
+// （与旧行为一致）。
+//
+// 配对规则见 cue.ResolveSheet：同名 cue 优先，其次按 cue 内 FILE 字段反查
+// （兼容「简体 cue 名 + 繁体 wav 名」这类整轨）。
 func (s *Scanner) bindCueSheets(paths []string) (map[string]cueBind, []string) {
 	binds := make(map[string]cueBind)
 	warnings := make([]string, 0)
+	// 同一份 cue 的失败只报一次（同目录多轨会重复命中）。
+	warned := make(map[string]struct{})
 	for _, audioPath := range paths {
 		if !isSupportedAudio(audioPath) {
 			continue
 		}
-		ext := filepath.Ext(audioPath)
-		if strings.EqualFold(ext, ".wav") == false && strings.EqualFold(ext, ".flac") == false {
+		if !cue.BindableAudioExt(filepath.Ext(audioPath)) {
 			continue
 		}
-		cueAbs := strings.TrimSuffix(audioPath, ext) + ".cue"
-		cueInfo, err := os.Stat(cueAbs)
-		if err != nil || cueInfo.IsDir() {
+		cueAbs, ok := cue.ResolveSheet(filepath.Dir(audioPath), filepath.Base(audioPath))
+		if !ok {
 			continue
 		}
-		data, err := os.ReadFile(cueAbs)
-		if err != nil {
-			warnings = append(warnings, "读取 cue 失败: "+err.Error())
-			continue
+		if bind, ok := s.readCueBind(cueAbs, warned, &warnings); ok {
+			binds[audioPath] = bind
 		}
-		sheet, err := cue.ParseBytes(data)
-		if err != nil {
-			warnings = append(warnings, "解析 cue 失败: "+filepath.Base(cueAbs)+" "+err.Error())
-			continue
-		}
-		cueRel, err := filepath.Rel(s.opts.Root, cueAbs)
-		if err != nil {
-			continue
-		}
-		binds[audioPath] = cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: filepath.ToSlash(cueRel)}
 	}
 	return binds, warnings
+}
+
+// readCueBind 读取并解析一份 cue，生成绑定。失败时记入 warnings（同一份
+// cue 只报一次）并返回 false。
+func (s *Scanner) readCueBind(cueAbs string, warned map[string]struct{}, warnings *[]string) (cueBind, bool) {
+	data, err := os.ReadFile(cueAbs)
+	if err != nil {
+		if _, seen := warned[cueAbs]; !seen {
+			warned[cueAbs] = struct{}{}
+			*warnings = append(*warnings, "读取 cue 失败: "+err.Error())
+		}
+		return cueBind{}, false
+	}
+	sheet, err := cue.ParseBytes(data)
+	if err != nil {
+		if _, seen := warned[cueAbs]; !seen {
+			warned[cueAbs] = struct{}{}
+			*warnings = append(*warnings, "解析 cue 失败: "+filepath.Base(cueAbs)+" "+err.Error())
+		}
+		return cueBind{}, false
+	}
+	cueRel, err := filepath.Rel(s.opts.Root, cueAbs)
+	if err != nil {
+		return cueBind{}, false
+	}
+	return cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: filepath.ToSlash(cueRel)}, true
 }
 
 // extractCueTracks 把一份整轨音频按 cue 展开为虚拟轨道。父音频探针一次，
@@ -1089,8 +1106,15 @@ func (s *Scanner) rescanCueTrack(ctx context.Context, pseudoRel string) (domain.
 	if err != nil {
 		return domain.Track{}, err
 	}
-	cueRel := domain.CueSheetPathFor(parentRel)
-	cueAbs := filepath.Join(s.opts.Root, filepath.FromSlash(cueRel))
+	audioAbs := filepath.Join(s.opts.Root, filepath.FromSlash(parentRel))
+	cueAbs, ok := cue.ResolveSheet(filepath.Dir(audioAbs), filepath.Base(audioAbs))
+	if !ok {
+		return domain.Track{}, fmt.Errorf("未找到与 %s 配对的 cue 文件", filepath.Base(parentRel))
+	}
+	cueRel, err := filepath.Rel(s.opts.Root, cueAbs)
+	if err != nil {
+		return domain.Track{}, err
+	}
 	data, err := os.ReadFile(cueAbs)
 	if err != nil {
 		return domain.Track{}, fmt.Errorf("读取 cue 文件: %w", err)
@@ -1099,8 +1123,8 @@ func (s *Scanner) rescanCueTrack(ctx context.Context, pseudoRel string) (domain.
 	if err != nil {
 		return domain.Track{}, err
 	}
-	audioAbs := filepath.Join(s.opts.Root, filepath.FromSlash(parentRel))
-	for _, track := range s.extractCueTracks(ctx, audioAbs, parentRel, cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: cueRel}) {
+	bind := cueBind{sheet: sheet, cueAbs: cueAbs, cueRel: filepath.ToSlash(cueRel)}
+	for _, track := range s.extractCueTracks(ctx, audioAbs, parentRel, bind) {
 		if track.CueTrackNumber == number {
 			return track, nil
 		}

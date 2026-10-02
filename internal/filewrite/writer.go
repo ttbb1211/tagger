@@ -280,13 +280,25 @@ func (w *Writer) cueParentRef(ref library.FileRef) (library.FileRef, int, error)
 	return parent, number, nil
 }
 
-// cueSheetRef 返回虚拟轨道对应 cue 文件的引用。
+// cueSheetRef 返回虚拟轨道对应 cue 文件的引用。cue 名未必与父音频同名
+// （例如简体 cue 名配繁体 wav 名），因此用 cue.ResolveSheet 解析真实路径；
+// 解析不到时退回约定路径，保持旧行为（后续读取会报错）。
 func (w *Writer) cueSheetRef(ref library.FileRef) (library.FileRef, error) {
 	parent, _, err := w.cueParentRef(ref)
 	if err != nil {
 		return library.FileRef{}, err
 	}
 	sheet := parent
+	parentAbs := filepath.Join(w.Root(), filepath.FromSlash(parent.RelativePath))
+	if resolved, ok := cue.ResolveSheet(filepath.Dir(parentAbs), filepath.Base(parentAbs)); ok {
+		rel, relErr := filepath.Rel(w.Root(), resolved)
+		if relErr != nil {
+			return library.FileRef{}, relErr
+		}
+		sheet.RelativePath = filepath.ToSlash(rel)
+		sheet.AbsolutePath = resolved
+		return sheet, nil
+	}
 	sheet.RelativePath = domain.CueSheetPathFor(parent.RelativePath)
 	sheet.AbsolutePath = filepath.Join(w.Root(), filepath.FromSlash(sheet.RelativePath))
 	return sheet, nil

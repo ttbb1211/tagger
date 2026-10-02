@@ -433,6 +433,52 @@ func TestWriterWritesCueVirtualTrackSidecarUnderLibraryRoot(t *testing.T) {
 	}
 }
 
+// 回归：cue 名与父音频不同名（简体 cue 名 + 繁体 wav 名）时，虚拟轨道的
+// 读写必须落在真实那份 cue 上，而不是按同名规则另建一份 —— 否则读会报
+// 找不到文件、写会在磁盘上凭空多出一个繁体名的空 cue。
+func TestWriterResolvesRenamedCueSheetForVirtualTrack(t *testing.T) {
+	root := t.TempDir()
+	audioPath := filepath.Join(root, "費玉清 - 萬里長城.wav")
+	if err := os.WriteFile(audioPath, []byte("fake wav bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cuePath := filepath.Join(root, "费玉清 - 萬里長城.cue")
+	cueBody := "PERFORMER \"費玉清\"\nTITLE \"萬里長城\"\nFILE \"費玉清 - 萬里長城.wav\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"夜來香\"\n    INDEX 01 00:00:00\n"
+	if err := os.WriteFile(cuePath, []byte(cueBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := New(root, newMemoryEngine(map[string][]string{"TITLE": {"x"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := library.FileRef{
+		ID:           "trk-cue-1",
+		RelativePath: domain.CueVirtualPath("費玉清 - 萬里長城.wav", 1),
+		AbsolutePath: audioPath,
+		Format:       domain.FormatWAV,
+	}
+
+	sheetRef, err := writer.cueSheetRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sheetRef.RelativePath != "费玉清 - 萬里長城.cue" {
+		t.Fatalf("sheet RelativePath = %q", sheetRef.RelativePath)
+	}
+	if sheetRef.AbsolutePath != cuePath {
+		t.Fatalf("sheet AbsolutePath = %q", sheetRef.AbsolutePath)
+	}
+
+	raw, err := writer.ReadRawTags(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("ReadRawTags: %v", err)
+	}
+	if titles := raw["TITLE"]; len(titles) == 0 || titles[0] != "夜來香" {
+		t.Fatalf("cue track title = %#v", raw["TITLE"])
+	}
+}
+
 // 回归：写入预检必须能解析 cue 虚拟轨道。虚拟轨道的 RelativePath 是伪路径
 // <父音频>#cue:N，磁盘上没有这个文件；旧实现直接拿它做 containedPath，于是
 // Windows 在文件名里的冒号上报 "Incorrect function"、Linux 报 ENOENT，整批
