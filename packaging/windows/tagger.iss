@@ -18,6 +18,14 @@ AppVersion={#APP_VERSION}
 AppPublisher={#AppPublisher}
 AppPublisherURL=https://github.com/ttbb1211/tagger
 DefaultDirName={autopf}\{#AppName}
+; ★ 必须显式写 no。DisableDirPage 的默认值是 auto —— 它会在启动时查注册表，
+;   发现同一 AppId 已安装就「不显示选择安装位置页」，并静默沿用上次的目录
+;   （配合 UsePreviousAppDir 的默认 yes）。症状：升级时向导直接从许可页跳到
+;   自定义的「选择音乐库目录」页，用户看不到安装位置、也不知道装到哪去了。
+;   写 no 后该页始终显示，且默认值仍会被 UsePreviousAppDir 预填为上次的目录。
+DisableDirPage=no
+; 「准备安装」页显示目标目录，安装前可再确认一次装到哪里
+AlwaysShowDirOnReadyPage=yes
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 SetupIconFile=../../frontend/public/favicon.ico
