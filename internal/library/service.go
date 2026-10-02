@@ -60,7 +60,10 @@ type Service struct {
 	library domain.LibrarySummary
 	tracks  []domain.Track
 	byID    map[string]domain.Track
-	report  domain.ScanReport
+	// searchKeys 是曲目 ID → 预计算搜索键（含简繁归一化），随曲库索引一起重建。
+	// 放在这里而不是 domain.Track 上，是为了不污染持久化 payload、也不需要重新扫描。
+	searchKeys map[string]string
+	report     domain.ScanReport
 
 	orderedMu    sync.RWMutex
 	ordered      map[TrackSort][]domain.Track
@@ -74,7 +77,8 @@ type Service struct {
 func New(ctx context.Context, scanner *scanner.Scanner, repositories ...Repository) (*Service, error) {
 	service := &Service{
 		scanner: scanner, ordered: make(map[TrackSort][]domain.Track), orderVersion: 1,
-		eventSubs: make(map[chan Event]struct{}), eventVersion: 1,
+		searchKeys: make(map[string]string),
+		eventSubs:  make(map[chan Event]struct{}), eventVersion: 1,
 	}
 	if len(repositories) > 0 {
 		service.repo = repositories[0]
@@ -280,8 +284,10 @@ func (s *Service) RemoveMissing() int {
 	}
 	s.tracks = kept
 	s.byID = make(map[string]domain.Track, len(kept))
+	s.searchKeys = make(map[string]string, len(kept))
 	for _, track := range kept {
 		s.byID[track.ID] = cloneTrack(track)
+		s.searchKeys[track.ID] = buildSearchKey(track)
 	}
 	s.library.TrackCount = len(kept)
 	s.library.FolderCount = len(buildFoldersForTracks(kept))
@@ -365,6 +371,7 @@ func (s *Service) apply(result scanner.Result) {
 		}
 	}
 	byID := make(map[string]domain.Track, len(result.Tracks))
+	searchKeys := make(map[string]string, len(result.Tracks))
 	for index := range result.Tracks {
 		track := result.Tracks[index]
 		if track.SyncState == "" {
@@ -372,6 +379,7 @@ func (s *Service) apply(result scanner.Result) {
 			result.Tracks[index] = track
 		}
 		byID[track.ID] = cloneTrack(track)
+		searchKeys[track.ID] = buildSearchKey(track)
 	}
 
 	s.mu.Lock()
@@ -384,6 +392,7 @@ func (s *Service) apply(result scanner.Result) {
 	s.library = cloneLibrary(result.Library)
 	s.tracks = cloneTracks(result.Tracks)
 	s.byID = byID
+	s.searchKeys = searchKeys
 	s.report = result.Report
 	s.mu.Unlock()
 	s.invalidateTrackOrder()
@@ -398,8 +407,12 @@ func (s *Service) applyTrack(track domain.Track) {
 	if s.byID == nil {
 		s.byID = make(map[string]domain.Track)
 	}
+	if s.searchKeys == nil {
+		s.searchKeys = make(map[string]string)
+	}
 	clone := cloneTrack(track)
 	s.byID[track.ID] = clone
+	s.searchKeys[track.ID] = buildSearchKey(track)
 	for index := range s.tracks {
 		if s.tracks[index].ID == track.ID {
 			s.tracks[index] = clone
@@ -433,10 +446,20 @@ func (s *Service) LastReport() domain.ScanReport {
 	return report
 }
 
+// searchKey 返回曲目的搜索键。调用方必须持有 s.mu 的读锁。
+// 索引万一没覆盖到该曲目（例如刚插入还没来得及重建），就地现算兜底，
+// 宁可多花一次转换，也不能因为索引缺口让曲目搜不到。
+func (s *Service) searchKey(track domain.Track) string {
+	if key, found := s.searchKeys[track.ID]; found {
+		return key
+	}
+	return buildSearchKey(track)
+}
+
 func (s *Service) ListTracks(filter TrackFilter) []domain.Track {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	needle := newSearchNeedle(strings.TrimSpace(filter.Query))
 	result := make([]domain.Track, 0, len(s.tracks))
 	for _, track := range s.tracks {
 		if filter.Health == domain.HealthMissing {
@@ -457,7 +480,7 @@ func (s *Service) ListTracks(filter TrackFilter) []domain.Track {
 		if filter.Format != "" && track.Format != filter.Format {
 			continue
 		}
-		if query != "" && !trackMatches(track, query) {
+		if !needle.empty() && !needle.matches(s.searchKey(track)) {
 			continue
 		}
 		result = append(result, cloneTrack(track))
@@ -494,10 +517,32 @@ func (s *Service) ListTrackPage(query TrackQuery, cursor string, limit int) (Tra
 		offset = state.Offset
 	}
 
+	needle := newSearchNeedle(normalized.Query)
+	page, total := s.collectPage(ordered, normalized, needle, offset, pageSize)
+	if offset > total {
+		return TrackPage{}, fmt.Errorf("%w: offset exceeds result", ErrInvalidTrackCursor)
+	}
+	result := TrackPage{Tracks: page, Total: total}
+	consumed := offset + len(page)
+	if consumed < total {
+		result.HasMore = true
+		result.NextCursor = encodeTrackCursor(trackCursor{Generation: generation, QueryHash: queryHash(normalized), Offset: consumed})
+	}
+	return result, nil
+}
+
+// collectPage 在曲库读锁下过滤并切页。持锁是为了让搜索键与曲目来自同一代索引，
+// 也保证 ordered 快照里的曲目一定能在 searchKeys 里查到。
+func (s *Service) collectPage(ordered []domain.Track, query TrackQuery, needle searchNeedle, offset, pageSize int) ([]domain.Track, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	page := make([]domain.Track, 0, pageSize)
 	total, matched := 0, 0
 	for _, track := range ordered {
-		if !trackMatchesQuery(track, normalized) {
+		if !trackMatchesFilters(track, query) {
+			continue
+		}
+		if !needle.empty() && !needle.matches(s.searchKey(track)) {
 			continue
 		}
 		total++
@@ -510,16 +555,7 @@ func (s *Service) ListTrackPage(query TrackQuery, cursor string, limit int) (Tra
 		}
 		matched++
 	}
-	if offset > total {
-		return TrackPage{}, fmt.Errorf("%w: offset exceeds result", ErrInvalidTrackCursor)
-	}
-	result := TrackPage{Tracks: page, Total: total}
-	consumed := offset + len(page)
-	if consumed < total {
-		result.HasMore = true
-		result.NextCursor = encodeTrackCursor(trackCursor{Generation: generation, QueryHash: queryHash(normalized), Offset: consumed})
-	}
-	return result, nil
+	return page, total
 }
 
 func (s *Service) ResolveTracksByIDs(ids []string, limit int) ([]domain.Track, error) {
@@ -567,19 +603,35 @@ func (s *Service) ResolveTracksByQuery(query TrackQuery, limit int) ([]domain.Tr
 		return nil, 0, err
 	}
 	ordered, _ := s.orderedTracks(normalized.Sort)
+	needle := newSearchNeedle(normalized.Query)
+	result, total, tooMany := s.collectMatching(ordered, normalized, needle, limit)
+	if tooMany {
+		return nil, total, ErrTrackSelectionLarge
+	}
+	return result, total, nil
+}
+
+// collectMatching 与 collectPage 同源，差别是它在超过 limit 时立刻中止，
+// 因为调用方（批量选择）需要的是「超限」这个信号而不是完整结果。
+func (s *Service) collectMatching(ordered []domain.Track, query TrackQuery, needle searchNeedle, limit int) ([]domain.Track, int, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	result := make([]domain.Track, 0)
 	total := 0
 	for _, track := range ordered {
-		if !trackMatchesQuery(track, normalized) {
+		if !trackMatchesFilters(track, query) {
+			continue
+		}
+		if !needle.empty() && !needle.matches(s.searchKey(track)) {
 			continue
 		}
 		total++
 		if total > limit {
-			return nil, total, ErrTrackSelectionLarge
+			return nil, total, true
 		}
 		result = append(result, cloneTrack(track))
 	}
-	return result, total, nil
+	return result, total, false
 }
 
 func (s *Service) orderedTracks(mode TrackSort) ([]domain.Track, uint64) {
@@ -649,24 +701,6 @@ func (s *Service) currentScanner() *scanner.Scanner {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.scanner
-}
-
-func trackMatches(track domain.Track, query string) bool {
-	values := []string{track.Title, track.FileName, track.RelativePath, track.Album}
-	values = append(values, track.Artists...)
-	values = append(values, track.AlbumArtists...)
-	values = append(values, track.Genres...)
-	for _, hint := range track.TagHints {
-		values = append(values, hint.Title, hint.Album)
-		values = append(values, hint.Artists...)
-		values = append(values, hint.AlbumArtists...)
-	}
-	for _, value := range values {
-		if strings.Contains(strings.ToLower(value), query) {
-			return true
-		}
-	}
-	return false
 }
 
 func cloneTracks(tracks []domain.Track) []domain.Track {

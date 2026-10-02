@@ -127,7 +127,9 @@ func normalizePageSize(limit int) (int, error) {
 	return limit, nil
 }
 
-func trackMatchesQuery(track domain.Track, query TrackQuery) bool {
+// trackMatchesFilters 只做结构筛选（缺失/目录/健康度/格式）。
+// 文本搜索由 searchNeedle.matches 基于预计算的搜索键完成，见 searchindex.go。
+func trackMatchesFilters(track domain.Track, query TrackQuery) bool {
 	if query.Health == domain.HealthMissing {
 		if !track.Missing {
 			return false
@@ -153,25 +155,7 @@ func trackMatchesQuery(track domain.Track, query TrackQuery) bool {
 	if query.Format != "" && track.Format != query.Format {
 		return false
 	}
-	needle := strings.ToLower(query.Query)
-	if needle == "" {
-		return true
-	}
-	values := []string{track.Title, track.FileName, track.RelativePath, track.Album}
-	values = append(values, track.Artists...)
-	values = append(values, track.AlbumArtists...)
-	values = append(values, track.Genres...)
-	for _, hint := range track.TagHints {
-		values = append(values, hint.Title, hint.Album)
-		values = append(values, hint.Artists...)
-		values = append(values, hint.AlbumArtists...)
-	}
-	for _, value := range values {
-		if strings.Contains(strings.ToLower(value), needle) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func compareTrack(left, right domain.Track, mode TrackSort) int {
