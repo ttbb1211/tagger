@@ -140,12 +140,32 @@ describe('LibraryPage active library boundary', () => {
     render(<LibraryPage onOpenReview={vi.fn()} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
 
     await screen.findByText('目录曲目');
+    // 「艺人」是为多级路径合成的父节点，点它会递归选中（见下一条用例）；
+    // 这条用例要验的是「真实目录 + 包含子目录开关」，所以先落到真实的「专辑」目录上。
     await user.click(screen.getByRole('button', {name: /艺人 2/}));
+    await user.click(screen.getByRole('button', {name: /专辑 2/}));
     expect(screen.queryByText('子目录曲目')).not.toBeInTheDocument();
     const recursiveToggle = screen.getByRole('checkbox', {name: '包含子目录'});
     expect(recursiveToggle).toBeEnabled();
+    expect(recursiveToggle).not.toBeChecked();
     await user.click(recursiveToggle);
     expect(await screen.findByText('已加载 2 / 共 2 首')).toBeInTheDocument();
+  });
+
+  it('selects a path-only folder node recursively so multi-level albums are not empty', async () => {
+    const user = userEvent.setup();
+    api.listLibraries.mockResolvedValue([nestedLibrary]);
+    installTrackPageSource([folderTrack, childFolderTrack]);
+    render(<LibraryPage onOpenReview={vi.fn()} onOpenSettings={vi.fn()} onNotice={vi.fn()} playerPlaying={false} onPlayTrack={vi.fn()} onTogglePlayer={vi.fn()} />);
+
+    await screen.findByText('目录曲目');
+    // 「艺人」在目录树里是为多级路径合成的父节点，没有 folderId —— 等价于磁盘上没有
+    // 任何目录正好叫这个路径，曲目都记在更深的 folderId 上。按「仅当前目录」精确匹配
+    // 必然是 0 首，双层整轨专辑（[专辑][母版]/[专辑]）点开就是一片空白，专辑分组标题
+    // 行也无从渲染。这正是「单层目录正常、双层目录失效」的根因，故必须递归选中。
+    await user.click(screen.getByRole('button', {name: /艺人 2/}));
+    expect(await screen.findByText('已加载 2 / 共 2 首')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', {name: '包含子目录'})).toBeChecked();
   });
 
   it('marks the whole-library scope and album breakdown so a flat list is not read as one album', async () => {

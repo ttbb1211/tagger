@@ -1292,11 +1292,18 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
           setMobileSidebar(false);
         }}
         onSelectFolderPath={(path) => {
+          // 只有「多级路径」才会走到这里：folderTree 会为 A/B/C 合成出 A、A/B 两个
+          // 没有 folderId 的父节点。而节点没有 folderId，等价于磁盘上没有任何目录
+          // 正好叫这个路径（否则那份目录会给它挂上 folderId），也就是说曲目都记在
+          // 更深的 folderId 上，父节点自身按「仅当前目录」精确匹配必然 0 首。
+          // 双层整轨专辑（[专辑][母版]/[专辑]）在树上点开就是一片空白，专辑分组标题
+          // 行自然也无从渲染；而单层目录有 folderId，所以看起来「单层正常、双层失效」。
+          // 父节点只能递归选，这也与树上显示的曲目数（子目录合计）保持一致。
           setActiveFolder(null);
           setActiveFolderPath(path);
           setActiveFilter('all');
-          setIncludeSubfolders(false);
-          if (library) writeBrowseState(library.id, {folderPath: path, includeSubfolders: false});
+          setIncludeSubfolders(true);
+          if (library) writeBrowseState(library.id, {folderPath: path, includeSubfolders: true});
           setActiveTrackId(undefined);
           setMobileSidebar(false);
         }}
