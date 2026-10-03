@@ -245,7 +245,7 @@ export function App() {
             exit={{opacity: 0, y: -5}}
             transition={{duration: 0.22, ease: [0.22, 1, 0.36, 1]}}
           >
-            {route.page === 'library' && <LibraryPage onOpenReview={openReview} onOpenSettings={() => navigatePage('settings')} onNotice={setNotice} playerTrackId={playerTrack?.id} playerPlaying={playerPlaying} onPlayTrack={playTrack} onTogglePlayer={() => setPlayerPlaying((value) => !value)} showGeneratedCovers={showGeneratedCovers} restoreDraft={restoreDraft} onRestoreDraftConsumed={() => setRestoreDraft(undefined)} onDiscardRestoreDraft={() => setRestoreDraft(undefined)} />}
+            {route.page === 'library' && <LibraryPage onOpenReview={openReview} onOpenSettings={() => navigatePage('settings')} onNotice={setNotice} playerTrackId={playerTrack?.id} playerTrack={playerTrack} playerPlaying={playerPlaying} onPlayTrack={playTrack} onTogglePlayer={() => setPlayerPlaying((value) => !value)} showGeneratedCovers={showGeneratedCovers} restoreDraft={restoreDraft} onRestoreDraftConsumed={() => setRestoreDraft(undefined)} onDiscardRestoreDraft={() => setRestoreDraft(undefined)} />}
             {route.page === 'review' && (
               <ReviewPage
                 trackIds={route.batchIds}

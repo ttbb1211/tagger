@@ -48,6 +48,21 @@ type Result struct {
 	Library domain.LibrarySummary
 	Tracks  []domain.Track
 	Report  domain.ScanReport
+	// Scanned 是本次扫描真正走到的音频文件（root 相对路径、斜杠分隔），
+	// Indexed 是本次扫描由这些文件产出的曲目路径。
+	//
+	// 增量落库要靠这两个集合区分两种情况：
+	//   ① 「扫描器看过这个文件，但决定不为它保留记录」——库里若还有对应的行，
+	//      那是**多余的行**，应当直接删除。整轨 CUE 专辑就是典型：扫描器只产出
+	//      `<父音频>#cue:N` 虚拟轨道，从不产出父音频本身的记录，于是历史遗留
+	//      （或目录对账草稿化产生的）父音频幽灵行永远等不到人来清理。
+	//   ② 「扫描器根本没走到这个文件」——目录不可读、目标目录不存在等，必须
+	//      原样保留，不能当成「文件没了」。
+	//
+	// 二者只差一个「走没走到」的判据，所以两个集合都要带上；只带 Indexed 会把
+	// 不可读目录里的曲目误删。
+	Scanned []string
+	Indexed []string
 }
 
 // DiscoveredFile is the cheap filesystem projection used by live browsing.
@@ -254,6 +269,20 @@ func (s *Scanner) scan(ctx context.Context, options ScanOptions) (Result, error)
 	}
 	rootInfo, _ := os.Stat(s.opts.Root)
 	rootWritable := rootInfo != nil && rootInfo.Mode().Perm()&0o222 != 0
+	// 供增量落库判定「多余的行」用：走到的文件（Scanned）与由它们产出的记录
+	// （Indexed，即 seen 的键）。整轨专辑的父音频只会出现在前者、不会出现在后者。
+	scanned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if relativePath, relErr := filepath.Rel(s.opts.Root, path); relErr == nil {
+			scanned = append(scanned, filepath.ToSlash(relativePath))
+		}
+	}
+	indexed := make([]string, 0, len(seen))
+	for relativePath := range seen {
+		indexed = append(indexed, relativePath)
+	}
+	sort.Strings(scanned)
+	sort.Strings(indexed)
 	return Result{
 		Library: domain.LibrarySummary{
 			ID:            s.opts.LibraryID,
@@ -266,7 +295,9 @@ func (s *Scanner) scan(ctx context.Context, options ScanOptions) (Result, error)
 			LastScanLabel: completed.Format("2006-01-02 15:04"),
 			Folders:       folders,
 		},
-		Tracks: tracks,
+		Tracks:  tracks,
+		Scanned: scanned,
+		Indexed: indexed,
 		Report: domain.ScanReport{
 			StartedAt:    started.Format(time.RFC3339),
 			CompletedAt:  completed.Format(time.RFC3339),

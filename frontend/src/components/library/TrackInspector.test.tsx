@@ -405,3 +405,61 @@ describe('TrackInspector', () => {
     expect(onSearch).toHaveBeenCalledWith('lyrics');
   });
 });
+
+function renderInspector(overrides: Partial<Parameters<typeof TrackInspector>[0]> = {}) {
+  return render(
+    <TrackInspector
+      track={seedTracks[0]}
+      saving={false}
+      mobileOpen
+      onCloseMobile={() => {}}
+      onSearch={() => {}}
+      onSave={vi.fn().mockResolvedValue(undefined)}
+      onArtworkChange={vi.fn().mockResolvedValue(undefined)}
+      {...overrides}
+    />,
+  );
+}
+
+describe('TrackInspector 正在播放提示', () => {
+  // 老板的困惑来源：播放器在播「無心睡眠」，面板标题却停在上次点过的曲目。
+  // 两种情形必须分开表达 —— 面板就是当前曲时改 eyebrow，不是当前曲时给横幅。
+  it('面板就是正在播放的那首时，eyebrow 直接写 NOW PLAYING', () => {
+    const {container} = renderInspector({playerTrackId: seedTracks[0].id, playerPlaying: true});
+    const eyebrow = container.querySelector('.eyebrow.is-playing');
+    expect(eyebrow).not.toBeNull();
+    expect(eyebrow).toHaveTextContent('NOW PLAYING');
+    expect(container.querySelector('.now-playing-banner')).toBeNull();
+  });
+
+  it('在看别首而播放器还在播时，给出横幅并支持一键切回', async () => {
+    const user = userEvent.setup();
+    const onSelectTrack = vi.fn();
+    const other: Track = {...seedTracks[1], id: 'trk-other', title: '無心睡眠'};
+    const {container} = renderInspector({
+      playerTrackId: other.id,
+      playerTrack: other,
+      playerPlaying: true,
+      onSelectTrack,
+    });
+
+    const banner = container.querySelector('.now-playing-banner');
+    expect(banner).not.toBeNull();
+    expect(banner).toHaveTextContent('無心睡眠');
+    await user.click(screen.getByRole('button', {name: '查看这首'}));
+    expect(onSelectTrack).toHaveBeenCalledWith('trk-other');
+  });
+
+  it('暂停中只要在播那一首，横幅与 eyebrow 的逻辑不变（状态跟曲子而非跟播放键）', () => {
+    const other: Track = {...seedTracks[1], id: 'trk-other', title: '拒絕再玩'};
+    const {container} = renderInspector({playerTrackId: other.id, playerTrack: other, playerPlaying: false});
+    expect(container.querySelector('.eyebrow')?.textContent).toContain('NOW INSPECTING');
+    expect(container.querySelector('.now-playing-banner')).not.toBeNull();
+  });
+
+  it('没有在播曲目时不出现任何播放提示', () => {
+    const {container} = renderInspector({playerTrackId: undefined, playerTrack: null});
+    expect(container.querySelector('.eyebrow.is-playing')).toBeNull();
+    expect(container.querySelector('.now-playing-banner')).toBeNull();
+  });
+});

@@ -301,6 +301,120 @@ func TestPurgeMissingRemovesOnlyMarkedIndexes(t *testing.T) {
 	}
 }
 
+// 整轨 CUE 专辑：扫描器只产出 `<父音频>#cue:N` 虚拟轨道，父音频本身没有记录。
+// 库里遗留的父音频行（历史版本、或目录对账草稿化产生的幽灵记录）属于
+// 「扫描器走过、但决定不产出」，增量落库必须直接删掉，而不是留给人工 purge。
+func TestSaveScanDeltaDropsWholeTrackMasterGhost(t *testing.T) {
+	dataStore := openTestStore(t)
+	root := filepath.Join(t.TempDir(), "Music")
+	ghost := testTrack("trk-ghost", "Album/Album.wav")
+	one := testTrack("trk-one", "Album/Album.wav#cue:1")
+	two := testTrack("trk-two", "Album/Album.wav#cue:2")
+	if err := dataStore.SaveScan(context.Background(), root, testScanResult("lib-cue", "Cue", ghost, one, two)); err != nil {
+		t.Fatal(err)
+	}
+
+	// 快速扫描：走到的只有父音频，产出的是两条虚拟轨道；父音频那行被扫描器
+	// 当成「未产出」标记缺失，仍然带在 Tracks 里（这是刻意保留给人工确认的）。
+	ghostMissing := ghost
+	ghostMissing.Missing = true
+	ghostMissing.Health = domain.HealthMissing
+	result := testDeltaResult("lib-cue", "Cue",
+		[]string{"Album/Album.wav"},
+		[]string{"Album/Album.wav#cue:1", "Album/Album.wav#cue:2"},
+		one, two, ghostMissing)
+	if err := dataStore.SaveScanDelta(context.Background(), root, result, []domain.Track{ghostMissing}); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, found, err := dataStore.LoadScan(context.Background(), root)
+	if err != nil || !found {
+		t.Fatalf("load scan found=%v err=%v", found, err)
+	}
+	if len(loaded.Tracks) != 2 {
+		t.Fatalf("tracks=%d, want 2 (ghost master must be dropped): %#v", len(loaded.Tracks), loaded.Tracks)
+	}
+	for _, track := range loaded.Tracks {
+		if track.ID == ghost.ID {
+			t.Fatalf("ghost master %s survived the delta save", ghost.RelativePath)
+		}
+	}
+	var fileRows int
+	if err := dataStore.db.QueryRow(`SELECT COUNT(*) FROM library_files WHERE library_id=?`, "lib-cue").Scan(&fileRows); err != nil {
+		t.Fatal(err)
+	}
+	if fileRows != 2 {
+		t.Fatalf("library_files=%d, want 2 (stale file rows must be dropped too)", fileRows)
+	}
+}
+
+// cue 改小 / 删除后残留的虚拟轨道：来源父音频被走到、这条虚拟路径没被产出 ⇒ 删。
+func TestSaveScanDeltaDropsStaleCueVirtualTrack(t *testing.T) {
+	dataStore := openTestStore(t)
+	root := filepath.Join(t.TempDir(), "Music")
+	stale := testTrack("trk-stale", "Album/Album.wav#cue:9")
+	one := testTrack("trk-one", "Album/Album.wav#cue:1")
+	if err := dataStore.SaveScan(context.Background(), root, testScanResult("lib-cue", "Cue", stale, one)); err != nil {
+		t.Fatal(err)
+	}
+	result := testDeltaResult("lib-cue", "Cue",
+		[]string{"Album/Album.wav"},
+		[]string{"Album/Album.wav#cue:1"},
+		one)
+	if err := dataStore.SaveScanDelta(context.Background(), root, result, nil); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := dataStore.LoadScan(context.Background(), root)
+	if err != nil || len(loaded.Tracks) != 1 || loaded.Tracks[0].ID != one.ID {
+		t.Fatalf("tracks=%#v err=%v, want only %s", loaded.Tracks, err, one.ID)
+	}
+}
+
+// 「扫描器没走到」≠「文件没了」：目标目录之外的行必须原样保留。
+// 定向扫描只走指定目录，其余行不在 Scanned 里，绝不能当多余行删掉。
+func TestSaveScanDeltaKeepsRowsOutsideScannedScope(t *testing.T) {
+	dataStore := openTestStore(t)
+	root := filepath.Join(t.TempDir(), "Music")
+	keep := testTrack("trk-keep", "single/keep.flac")
+	elsewhere := testTrack("trk-elsewhere", "CD/other/gone.flac")
+	if err := dataStore.SaveScan(context.Background(), root, testScanResult("lib-scope", "Scope", keep, elsewhere)); err != nil {
+		t.Fatal(err)
+	}
+	result := testDeltaResult("lib-scope", "Scope", []string{"single/keep.flac"}, []string{"single/keep.flac"}, keep)
+	if err := dataStore.SaveScanDelta(context.Background(), root, result, nil); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := dataStore.LoadScan(context.Background(), root)
+	if err != nil || len(loaded.Tracks) != 2 {
+		t.Fatalf("tracks=%d err=%v, want 2 (rows the scan never reached must survive)", len(loaded.Tracks), err)
+	}
+}
+
+// cue 读取/解析失败会记 warnings，此时扫描器把整轨当普通轨道处理；
+// 若照删就会丢掉虚拟轨道 —— 有 warnings 一律跳过清理，留给人工处理。
+func TestSaveScanDeltaKeepsSurplusRowsWhenWarningsPresent(t *testing.T) {
+	dataStore := openTestStore(t)
+	root := filepath.Join(t.TempDir(), "Music")
+	ghost := testTrack("trk-ghost", "Album/Album.wav")
+	one := testTrack("trk-one", "Album/Album.wav#cue:1")
+	if err := dataStore.SaveScan(context.Background(), root, testScanResult("lib-warn", "Warn", ghost, one)); err != nil {
+		t.Fatal(err)
+	}
+	result := testDeltaResult("lib-warn", "Warn",
+		[]string{"Album/Album.wav"},
+		[]string{"Album/Album.wav"},
+		ghost, one)
+	result.Report.WarningCount = 1
+	result.Report.Warnings = []string{"解析 cue 失败: Album.cue unexpected end of file"}
+	if err := dataStore.SaveScanDelta(context.Background(), root, result, nil); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := dataStore.LoadScan(context.Background(), root)
+	if err != nil || len(loaded.Tracks) != 2 {
+		t.Fatalf("tracks=%d err=%v, want 2 (warnings must disable surplus cleanup)", len(loaded.Tracks), err)
+	}
+}
+
 func TestScanAndRevisionSurviveReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "tagger.db")
 	first, err := Open(context.Background(), path)
@@ -689,6 +803,15 @@ func testScanResult(libraryID, name string, tracks ...domain.Track) scanner.Resu
 			Discovered: len(tracks), Parsed: len(tracks),
 		},
 	}
+}
+
+// testDeltaResult 造一个「增量扫描结果」：除曲目外还带上扫描器实际走到的文件
+// （Scanned）与由它们产出的记录（Indexed），供 saveTrackDelta 判定多余的行。
+func testDeltaResult(libraryID, name string, scanned, indexed []string, tracks ...domain.Track) scanner.Result {
+	result := testScanResult(libraryID, name, tracks...)
+	result.Scanned = scanned
+	result.Indexed = indexed
+	return result
 }
 
 func testTrack(id, relativePath string) domain.Track {

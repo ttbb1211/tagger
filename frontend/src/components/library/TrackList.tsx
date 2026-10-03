@@ -1,6 +1,6 @@
 import {memo, useEffect, useMemo, useRef} from 'react';
 import {Virtuoso, type StateSnapshot, type VirtuosoHandle} from 'react-virtuoso';
-import {AlertCircle, Check, ChevronDown, ListFilter, LoaderCircle, MoreHorizontal} from 'lucide-react';
+import {AlertCircle, Check, ChevronDown, ListFilter, LoaderCircle, MoreHorizontal, Pause, Play} from 'lucide-react';
 import {CoverArt} from '@/components/CoverArt';
 import {artworkURL} from '@/api';
 import {albumGroupCounts, albumGroupInfo, albumGroupKey} from '@/lib/trackGroups';
@@ -11,6 +11,13 @@ interface TrackListProps {
   tracks: Track[];
   showGeneratedCovers?: boolean;
   activeTrackId?: string;
+  // 播放态：列表原先完全不知道「正在播放」这件事，于是顶栏播 A、列表与右侧面板
+  // 都指向 B，用户看不出在播哪首。现在把播放器状态接到列表上：
+  //   · is-playing 行染色 + 左侧竖条 + 波形
+  //   · 封面叠加播放/暂停键，点它同时把该行设为选中 ⇒ 面板与播放器永远一致
+  playerTrackId?: string;
+  playerPlaying?: boolean;
+  onToggleTrackPlay?: (track: Track) => void;
   selectedIds: Set<string>;
   onSelectTrack: (track: Track) => void;
   onToggleTrack: (trackId: string) => void;
@@ -60,21 +67,36 @@ const AlbumGroupHead = memo(function AlbumGroupHead({track, count}: {track: Trac
   );
 });
 
+// 正在播放的跳动波形。暂停时静止但仍保留形状 —— 让「哪首在播」不依赖颜色。
+const NowPlayingWave = memo(function NowPlayingWave({active}: {active: boolean}) {
+  return (
+    <span className={cn('track-playing-wave', active && 'is-playing')} aria-hidden="true">
+      <i /><i /><i /><i />
+    </span>
+  );
+});
+
 const TrackRow = memo(function TrackRow({
   track,
   showGeneratedCovers = false,
   active,
   selected,
+  playing,
+  playingNow,
   onSelect,
   onToggle,
+  onTogglePlay,
   onRetryParse,
 }: {
   track: Track;
   showGeneratedCovers?: boolean;
   active: boolean;
   selected: boolean;
+  playing: boolean;
+  playingNow: boolean;
   onSelect: () => void;
   onToggle: () => void;
+  onTogglePlay?: () => void;
   onRetryParse?: (track: Track) => void;
 }) {
   const hint = unambiguousHint(track);
@@ -83,7 +105,7 @@ const TrackRow = memo(function TrackRow({
   const inferredDisplay = !track.title && Boolean(hint?.title);
   return (
     <div
-      className={cn('track-row', active && 'is-active', selected && 'is-selected', track.syncState === 'draft' && 'is-syncing')}
+      className={cn('track-row', active && 'is-active', selected && 'is-selected', playing && 'is-playing', track.syncState === 'draft' && 'is-syncing')}
       onClick={onSelect}
       role="row"
       tabIndex={0}
@@ -104,17 +126,33 @@ const TrackRow = memo(function TrackRow({
           {selected && <Check size={12} strokeWidth={3} />}
         </button>
       </div>
-      <CoverArt
-        title={displayTitle}
-        artist={displayArtists[0]}
-        tone={track.coverTone}
-        missing={!showGeneratedCovers && track.artworkCount === 0}
-		imageUrl={artworkURL(track)}
-		blankOnImageError={!showGeneratedCovers}
-        size="xs"
-      />
+      <div className="track-cover-wrap">
+        <CoverArt
+          title={displayTitle}
+          artist={displayArtists[0]}
+          tone={track.coverTone}
+          missing={!showGeneratedCovers && track.artworkCount === 0}
+          imageUrl={artworkURL(track)}
+          blankOnImageError={!showGeneratedCovers}
+          size="xs"
+        />
+        {onTogglePlay && (
+          <button
+            className="track-play-overlay"
+            title={track.syncState === 'draft' ? '索引完成后可试听' : playingNow ? '暂停' : '试听'}
+            aria-label={`${playingNow ? '暂停' : '试听'} ${displayTitle}`}
+            disabled={track.syncState === 'draft'}
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePlay();
+            }}
+          >
+            {playingNow ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}
+          </button>
+        )}
+      </div>
       <div className="track-primary">
-        <strong>{displayTitle}{inferredDisplay && <em className="inferred-tag">推断</em>}</strong>
+        <strong>{displayTitle}{inferredDisplay && <em className="inferred-tag">推断</em>}{playing && <NowPlayingWave active={playingNow} />}</strong>
         <span>{track.fileName}</span>
       </div>
       <div className="track-cell track-artist">{displayArtists.join(' / ') || (track.tagHints.length > 1 ? '文件名待确认' : '—')}</div>
@@ -151,6 +189,9 @@ export function TrackList({
   tracks,
   showGeneratedCovers = false,
   activeTrackId,
+  playerTrackId,
+  playerPlaying = false,
+  onToggleTrackPlay,
   selectedIds,
   onSelectTrack,
   onToggleTrack,
@@ -225,8 +266,11 @@ export function TrackList({
                   showGeneratedCovers={showGeneratedCovers}
                   active={track.id === activeTrackId}
                   selected={selectedIds.has(track.id)}
+                  playing={Boolean(playerTrackId) && track.id === playerTrackId}
+                  playingNow={Boolean(playerTrackId) && track.id === playerTrackId && playerPlaying}
                   onSelect={() => onSelectTrack(track)}
                   onToggle={() => onToggleTrack(track.id)}
+                  onTogglePlay={onToggleTrackPlay ? () => onToggleTrackPlay(track) : undefined}
                   onRetryParse={onRetryParse}
                 />
               </>

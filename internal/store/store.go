@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -306,10 +307,89 @@ func (s *Store) saveTrackDelta(ctx context.Context, root string, result scanner.
 			return fmt.Errorf("remove previous library file path %s: %w", previousPath, err)
 		}
 	}
+	// 增量落库默认只增不删，于是「扫描器已经走过、并决定不为它保留记录」的行
+	// 会一直留在库里（最典型的是整轨 CUE 专辑的父音频幽灵记录：扫描器只产出
+	// `<父音频>#cue:N` 虚拟轨道，父音频本身没有记录）。它们既不会被 upsert 覆盖、
+	// 也不会被自动清理，只能等用户手动「清除缺失记录」。
+	// Result.Scanned/Indexed 让这里能安全地判定并删除：
+	//   · 只有「本次确实走到过这个文件」才允许删（目录不可读 ⇒ 不在 Scanned ⇒ 不删）；
+	//   · 有任何 warnings 就整体跳过（cue 读取/解析失败时音频会被当成普通轨道，
+	//     此时删虚拟轨道会丢数据，宁可留给人工处理）。
+	if len(result.Scanned) > 0 && result.Report.WarningCount == 0 {
+		surplus, surplusErr := surplusTrackPaths(ctx, tx, result.Library.ID, result.Scanned, result.Indexed)
+		if surplusErr != nil {
+			return surplusErr
+		}
+		for _, relativePath := range surplus {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM tracks WHERE library_id=? AND relative_path=?`, result.Library.ID, relativePath); err != nil {
+				return fmt.Errorf("remove surplus track %s: %w", relativePath, err)
+			}
+		}
+		if len(surplus) > 0 {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM library_files WHERE library_id=? AND relative_path NOT IN (SELECT relative_path FROM tracks WHERE library_id=?)`, result.Library.ID, result.Library.ID); err != nil {
+				return fmt.Errorf("remove stale library files: %w", err)
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit track delta: %w", err)
 	}
 	return nil
+}
+
+// surplusTrackPaths 找出「本次扫描已经走到、但扫描器没有为它产出记录」的库内行。
+//
+// 判定规则：某行的**来源文件**（普通曲目就是它自己；整轨虚拟轨道是 `#cue:` 前的
+// 父音频）出现在 scanned 里，而这条路径本身不在 indexed 里 ⇒ 多余，应删。
+//
+// 例（整轨 CUE 专辑 Album/）：
+//
+//	scanned = [Album/Album.wav]        indexed = [Album/Album.wav#cue:1 … #cue:N]
+//	库内行 Album/Album.wav       → 来源已走到、未产出 ⇒ 删（父音频幽灵记录）
+//	库内行 Album/Album.wav#cue:3 → 已产出              ⇒ 留
+//	库内行 Album/Album.wav#cue:9 → cue 只声明 N<9 轨    ⇒ 删（残留虚拟轨道）
+//	库内行 Other/Gone.flac       → 来源不在 scanned     ⇒ 留（可能只是目录暂时不可读）
+func surplusTrackPaths(ctx context.Context, tx *sql.Tx, libraryID string, scanned, indexed []string) ([]string, error) {
+	scannedSet := make(map[string]struct{}, len(scanned))
+	for _, relativePath := range scanned {
+		if relativePath = strings.TrimSpace(relativePath); relativePath != "" {
+			scannedSet[relativePath] = struct{}{}
+		}
+	}
+	if len(scannedSet) == 0 {
+		return nil, nil
+	}
+	indexedSet := make(map[string]struct{}, len(indexed))
+	for _, relativePath := range indexed {
+		indexedSet[relativePath] = struct{}{}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT relative_path FROM tracks WHERE library_id=?`, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed track paths: %w", err)
+	}
+	defer rows.Close()
+	surplus := make([]string, 0)
+	for rows.Next() {
+		var relativePath string
+		if err := rows.Scan(&relativePath); err != nil {
+			return nil, fmt.Errorf("scan indexed track path: %w", err)
+		}
+		if _, ok := indexedSet[relativePath]; ok {
+			continue
+		}
+		origin := relativePath
+		if parent, _, parseErr := domain.ParseCueVirtualPath(relativePath); parseErr == nil {
+			origin = parent
+		}
+		if _, ok := scannedSet[origin]; ok {
+			surplus = append(surplus, relativePath)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate indexed track paths: %w", err)
+	}
+	sort.Strings(surplus)
+	return surplus, nil
 }
 
 func prepareLibraryFileUpsert(ctx context.Context, tx *sql.Tx) (*sql.Stmt, error) {

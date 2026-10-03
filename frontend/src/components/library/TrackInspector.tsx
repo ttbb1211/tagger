@@ -37,6 +37,10 @@ interface TrackInspectorProps {
   onRescan?: () => Promise<void>;
   playerTrackId?: string;
   playerPlaying?: boolean;
+  // 正在播放的曲目本体。若「正在播 ≠ 正在看」，顶部给一条可点横幅，
+  // 否则用户会误以为右侧显示的那首就是播放器在放的那首。
+  playerTrack?: Track | null;
+  onSelectTrack?: (trackId: string) => void;
   onPlayTrack?: (track: Track) => void;
   onTogglePlayer?: () => void;
   onNotice?: (message: string) => void;
@@ -149,6 +153,8 @@ export function TrackInspector({
   onRescan,
   playerTrackId,
   playerPlaying,
+  playerTrack,
+  onSelectTrack,
   onPlayTrack,
   onTogglePlayer,
   onNotice,
@@ -249,6 +255,9 @@ export function TrackInspector({
   }
 
   const activePlaying = playerTrackId === track.id ? Boolean(playerPlaying) : fallbackPlaying;
+  const isPlayerTrack = Boolean(playerTrackId) && playerTrackId === track.id;
+  // 正在播的是另一首：右侧面板的标题会被误读成「播放器在放这首」，所以显式提示。
+  const playingElsewhere = Boolean(playerTrack) && Boolean(playerTrackId) && playerTrackId !== track.id;
 
   const set = <K extends keyof TrackPatch>(key: K, value: TrackPatch[K]) => {
     setDraft((current) => current ? {...current, [key]: value} : current);
@@ -331,7 +340,9 @@ export function TrackInspector({
 		  blankOnImageError={!showGeneratedCovers}
         />
         <div className="hero-copy">
-          <div className="eyebrow">NOW INSPECTING · {track.format.toUpperCase()}</div>
+          <div className={cn('eyebrow', isPlayerTrack && 'is-playing')}>
+            {isPlayerTrack ? 'NOW PLAYING' : 'NOW INSPECTING'} · {track.format.toUpperCase()}
+          </div>
           <h2>{track.title || track.fileName}</h2>
           <p>{track.artists.join(' / ') || '内嵌艺术家为空'} <span>·</span> {track.album || '未知专辑'}</p>
           <div className="mini-player">
@@ -352,7 +363,17 @@ export function TrackInspector({
         </button>
 	  </div>
 
-	  {indexing && (
+	  {playingElsewhere && playerTrack && (
+    <div className="now-playing-banner">
+      <div>
+        <strong>正在播放</strong>
+        <span>{playerTrack.title || playerTrack.fileName}</span>
+      </div>
+      <button type="button" onClick={() => onSelectTrack?.(playerTrack.id)}>查看这首</button>
+    </div>
+  )}
+
+  {indexing && (
 		<div className="track-sync-banner">
 		  <LoaderCircle size={14} className={track.syncState === 'draft' ? 'spin' : undefined} />
 		  <span>{track.syncState === 'error' ? '文件解析失败，可重新读取后再编辑' : '正在读取标签、封面和技术信息，完成后自动解锁操作'}</span>

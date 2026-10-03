@@ -1,8 +1,10 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -124,5 +126,42 @@ func TestBindCueSheetsReportsUnparsableSameNameCue(t *testing.T) {
 	}
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %v, want exactly one", warnings)
+	}
+}
+
+// Result.Scanned / Indexed 是增量落库判定「多余的行」的唯一依据：
+// 整轨专辑的父音频必须出现在 Scanned（扫描器走到过）里，但**不能**出现在
+// Indexed（扫描器为它产出的记录）里 —— 它只会被展开成 #cue:N 虚拟轨道。
+// 库里遗留的父音频行正是靠这个差集被判为多余行并删除。
+func TestScanResultReportsScannedFilesAndProducedTracks(t *testing.T) {
+	root := t.TempDir()
+	writeCueFixture(t, filepath.Join(root, "Album", "Album.wav"), "audio")
+	writeCueFixture(t, filepath.Join(root, "Album", "Album.cue"), `FILE "Album.wav" WAVE
+  TRACK 01 AUDIO
+    TITLE "第一首"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "第二首"
+    INDEX 01 04:00:00
+`)
+	writeCueFixture(t, filepath.Join(root, "single.flac"), "audio")
+
+	musicScanner, err := New(fakeEngine{}, Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := musicScanner.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(result.Scanned, ","); got != "Album/Album.wav,single.flac" {
+		t.Fatalf("Scanned = %v, want the two audio files only", result.Scanned)
+	}
+	want := []string{"Album/Album.wav#cue:1", "Album/Album.wav#cue:2", "single.flac"}
+	if got := strings.Join(result.Indexed, ","); got != strings.Join(want, ",") {
+		t.Fatalf("Indexed = %v, want %v", result.Indexed, want)
+	}
+	if result.Report.WarningCount != 0 {
+		t.Fatalf("warnings = %v, want none", result.Report.Warnings)
 	}
 }

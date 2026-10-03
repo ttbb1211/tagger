@@ -498,12 +498,59 @@ button:disabled {
 }
 
 .eyebrow {
-  color: var(--accent);
+  color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+/* 面板正在显示的就是播放器在放的那首 —— 用 accent 点出来，与右侧波形呼应。 */
+.eyebrow.is-playing {
+  color: var(--accent);
+}
+
+/* 正在播的是另一首：面板标题会被误读成「播放器在放这首」，所以显式提示并给入口。 */
+.now-playing-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper-3));
+}
+
+.now-playing-banner > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.now-playing-banner strong {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.now-playing-banner span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-playing-banner button {
+  flex: none;
+  margin-left: auto;
+  padding: 5px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-size: 12px;
 }
 
 .primary-button,
@@ -1091,7 +1138,8 @@ button:disabled {
   padding: 0 9px;
   border-radius: 3px;
   background: transparent;
-  color: var(--muted);
+  /* 比 --muted 略沉，但远浅于 --ink（选中态）；四主题通用 —— 始终向背景方向走 40% */
+  color: color-mix(in srgb, var(--muted) 60%, var(--paper-3));
   text-align: left;
 }
 
@@ -1796,6 +1844,76 @@ button:disabled {
   color: var(--muted);
 }
 
+/* 正在播放的行：顶栏播 A、列表与面板指着 B 会让人找不到在播哪首，所以播放行
+   自带底色 + 左侧竖条 + 波形，不依赖「当前选中」判断。底色是老板挑的「暖灰中」。 */
+.track-row.is-playing {
+  background: color-mix(in srgb, var(--accent) 18%, var(--paper-3));
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.track-row.is-playing:hover {
+  background: color-mix(in srgb, var(--accent) 24%, var(--paper-3));
+}
+
+.track-cover-wrap {
+  position: relative;
+  justify-self: start;
+  width: fit-content;
+  line-height: 0;
+}
+
+.track-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.track-row:hover .track-play-overlay,
+.track-row.is-playing .track-play-overlay,
+.track-play-overlay:focus-visible {
+  opacity: 1;
+}
+
+.track-play-overlay:disabled {
+  opacity: 0;
+  cursor: default;
+}
+
+.track-playing-wave {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+  margin-left: 7px;
+  vertical-align: -1px;
+}
+
+.track-playing-wave i {
+  width: 2px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.track-playing-wave.is-playing i {
+  animation: track-playing-wave 900ms ease-in-out infinite;
+}
+
+.track-playing-wave.is-playing i:nth-child(2) { animation-delay: -0.3s; }
+.track-playing-wave.is-playing i:nth-child(3) { animation-delay: -0.6s; }
+.track-playing-wave.is-playing i:nth-child(4) { animation-delay: -0.45s; }
+
+@keyframes track-playing-wave {
+  0%, 100% { height: 4px; }
+  50% { height: 11px; }
+}
+
 .track-primary {
   min-width: 0;
 }
@@ -2227,7 +2345,8 @@ button:disabled {
   position: relative;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
+  padding: 9px 12px;
 }
 
 .inspector-tabs button::after {

@@ -62,6 +62,8 @@ interface LibraryPageProps {
   onNotice: (message: string) => void;
   playerTrackId?: string;
   playerPlaying: boolean;
+  /** 正在播放的曲目本体：面板要区分「正在看」与「正在播」两件事 */
+  playerTrack?: Track | null;
   /** queue 为「当前可见列表顺序」的曲目，用于播完自动下一首；不传则沿用上一次的队列 */
   onPlayTrack: (track: Track, queue?: Track[]) => void;
   onTogglePlayer: () => void;
@@ -242,7 +244,7 @@ function tagWriteNotice(track: Track, success: string): string {
   return `标签已写入，但文件仍有 ${track.tagIssues.length} 项内嵌标签兼容问题，请继续复核`;
 }
 
-export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrackId, playerPlaying, onPlayTrack, onTogglePlayer, showGeneratedCovers = false, restoreDraft, onRestoreDraftConsumed, onDiscardRestoreDraft}: LibraryPageProps) {
+export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrackId, playerPlaying, playerTrack, onPlayTrack, onTogglePlayer, showGeneratedCovers = false, restoreDraft, onRestoreDraftConsumed, onDiscardRestoreDraft}: LibraryPageProps) {
   const pageSize = 100;
   const [library, setLibrary] = useState<LibrarySummary | null>(null);
   const [librarySidebarWidth, setLibrarySidebarWidth] = useState<number | undefined>(readLibrarySidebarWidth);
@@ -1450,6 +1452,17 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
           tracks={visibleTracks}
           showGeneratedCovers={showGeneratedCovers}
           activeTrackId={activeTrackId}
+          playerTrackId={playerTrackId}
+          playerPlaying={playerPlaying}
+          onToggleTrackPlay={(track) => {
+            // 点行内播放键：播/暂停这一首，同时把该行设为选中 —— 面板与播放器
+            // 从此永远一致，不会再出现「顶栏播 A、面板显示 B」。
+            if (playerTrackId === track.id) onTogglePlayer();
+            else onPlayTrack(track, visibleTracks);
+            setActiveTrackId(track.id);
+            setMobileInspector(true);
+            setMobileSidebar(false);
+          }}
           selectedIds={selectedIds}
           onSelectTrack={(track) => {
             setActiveTrackId(track.id);
@@ -1489,6 +1502,8 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		onRescan={refreshActiveTrack}
 		playerTrackId={playerTrackId}
 		playerPlaying={playerPlaying}
+		playerTrack={playerTrack}
+		onSelectTrack={setActiveTrackId}
 		onPlayTrack={(track) => onPlayTrack(track, visibleTracks)}
 		onTogglePlayer={onTogglePlayer}
 		onNotice={onNotice}
