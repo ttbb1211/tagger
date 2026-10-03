@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"mime"
 	"net/url"
 	"os"
@@ -2171,10 +2172,11 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 }
 
 type wavLayout struct {
-	byteRate  int64
-	dataStart int64
-	dataSize  int64
-	fmtBody   []byte
+	byteRate   int64
+	blockAlign int64
+	dataStart  int64
+	dataSize   int64
+	fmtBody    []byte
 }
 
 func parseWAVLayout(file *os.File, fileSize int64) (wavLayout, error) {
@@ -2213,10 +2215,39 @@ func parseWAVLayout(file *os.File, fileSize int64) (wavLayout, error) {
 		return wavLayout{}, fmt.Errorf("WAV 头缺少 fmt/data 块")
 	}
 	layout.byteRate = int64(binary.LittleEndian.Uint32(layout.fmtBody[8:12]))
+	layout.blockAlign = int64(binary.LittleEndian.Uint16(layout.fmtBody[12:14]))
+	if layout.blockAlign <= 0 {
+		layout.blockAlign = 1
+	}
 	if layout.dataSize <= 0 || layout.dataStart+layout.dataSize > fileSize {
 		layout.dataSize = fileSize - layout.dataStart
 	}
 	return layout, nil
+}
+
+// cueOffsetBytes 把 cue 的起始秒数换算成父音频 data 块内的字节偏移。
+//
+// ⚠️ 这里必须「先四舍五入、再按 blockAlign 向下对齐」，不能直接 int64() 截断：
+// cue 时间是 分:秒:帧(75fps)，换算成秒是浮点数（如 11:44:60 = 704.8，float64 实为
+// 704.7999999999999545…），乘 byteRate 后得到 124326719.99999999 —— 直接截断会少 1 字节，
+// 16bit 立体声的采样点当场错位半个样本，浏览器解码出来就是**白噪音**（实测 2026-10-03，
+// 陳百強《一生何求》cue 第 4 轨；foobar2000 按 cue 帧号定位不受影响，故只有本程序出问题）。
+// 176400 / 75 = 2352，byteRate 是 75 的整数倍时「四舍五入到字节」等价于「对齐到 CD 帧」。
+func cueOffsetBytes(seconds float64, byteRate, blockAlign int64) int64 {
+	if byteRate <= 0 {
+		return 0
+	}
+	if blockAlign <= 0 {
+		blockAlign = 1
+	}
+	offset := int64(math.Round(seconds * float64(byteRate)))
+	if remainder := offset % blockAlign; remainder != 0 {
+		offset -= remainder
+	}
+	if offset < 0 {
+		return 0
+	}
+	return offset
 }
 
 func buildWAVHeader(fmtBody []byte, dataLen int64) []byte {
@@ -2239,8 +2270,9 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 	if err != nil || layout.byteRate <= 0 || layout.dataSize <= 0 {
 		return false
 	}
-	segDataStart := layout.dataStart + int64(track.StartOffsetSeconds*float64(layout.byteRate))
-	segDataLen := int64((track.EndOffsetSeconds - track.StartOffsetSeconds) * float64(layout.byteRate))
+	// 段起点/段长都按「四舍五入 + blockAlign 对齐」算，避免浮点截断导致采样点错位（见 cueOffsetBytes）
+	segDataStart := layout.dataStart + cueOffsetBytes(track.StartOffsetSeconds, layout.byteRate, layout.blockAlign)
+	segDataLen := cueOffsetBytes(track.EndOffsetSeconds-track.StartOffsetSeconds, layout.byteRate, layout.blockAlign)
 	if segDataStart+segDataLen > layout.dataStart+layout.dataSize {
 		segDataLen = layout.dataStart + layout.dataSize - segDataStart
 	}
