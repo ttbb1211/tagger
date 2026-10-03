@@ -11,6 +11,11 @@ function renderTopBar(version?: string) {
       playerTrack={null}
       playerPlaying={false}
       onPlayerPlayingChange={() => undefined}
+      onPlayerTrackEnded={() => undefined}
+      onPlayerPrevious={() => undefined}
+      onPlayerNext={() => undefined}
+      playerMode="order"
+      onPlayerModeChange={() => undefined}
       onPlayerClose={() => undefined}
     />,
   );

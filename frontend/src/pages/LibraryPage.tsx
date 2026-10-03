@@ -62,7 +62,8 @@ interface LibraryPageProps {
   onNotice: (message: string) => void;
   playerTrackId?: string;
   playerPlaying: boolean;
-  onPlayTrack: (track: Track) => void;
+  /** queue 为「当前可见列表顺序」的曲目，用于播完自动下一首；不传则沿用上一次的队列 */
+  onPlayTrack: (track: Track, queue?: Track[]) => void;
   onTogglePlayer: () => void;
   showGeneratedCovers?: boolean;
   restoreDraft?: RestoreDraftRequest;
@@ -1488,7 +1489,7 @@ export function LibraryPage({onOpenReview, onOpenSettings, onNotice, playerTrack
 		onRescan={refreshActiveTrack}
 		playerTrackId={playerTrackId}
 		playerPlaying={playerPlaying}
-		onPlayTrack={onPlayTrack}
+		onPlayTrack={(track) => onPlayTrack(track, visibleTracks)}
 		onTogglePlayer={onTogglePlayer}
 		onNotice={onNotice}
         showGeneratedCovers={showGeneratedCovers}

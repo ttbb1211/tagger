@@ -7,6 +7,7 @@ import {
 import {cn} from '@/lib/utils';
 import {GlobalPlayer} from '@/components/GlobalPlayer';
 import {TaggerMark} from '@/components/TaggerMark';
+import type {PlayerMode} from '@/lib/playerQueue';
 import type {PageID, Track} from '@/types';
 
 interface TopBarProps {
@@ -16,6 +17,12 @@ interface TopBarProps {
   playerTrack: Track | null;
   playerPlaying: boolean;
   onPlayerPlayingChange: (playing: boolean) => void;
+  onPlayerTrackEnded: () => void;
+  onPlayerPrevious: () => void;
+  onPlayerNext: () => void;
+  playerMode: PlayerMode;
+  onPlayerModeChange: (mode: PlayerMode) => void;
+  playerRestartToken?: number;
   onPlayerClose: () => void;
 }
 
@@ -26,7 +33,7 @@ const navItems: Array<{id: PageID; label: string; icon: typeof LibraryBig}> = [
   {id: 'settings', label: '设置', icon: Settings2},
 ];
 
-export function TopBar({page, version, onNavigate, playerTrack, playerPlaying, onPlayerPlayingChange, onPlayerClose}: TopBarProps) {
+export function TopBar({page, version, onNavigate, playerTrack, playerPlaying, onPlayerPlayingChange, onPlayerTrackEnded, onPlayerPrevious, onPlayerNext, playerMode, onPlayerModeChange, playerRestartToken, onPlayerClose}: TopBarProps) {
   return (
     <header className="top-bar">
       <button className="brand-block" onClick={() => onNavigate('library')} aria-label="返回曲库">
@@ -50,7 +57,7 @@ export function TopBar({page, version, onNavigate, playerTrack, playerPlaying, o
         ))}
       </nav>
 
-      <GlobalPlayer track={playerTrack} playing={playerPlaying} onPlayingChange={onPlayerPlayingChange} onClose={onPlayerClose} />
+      <GlobalPlayer track={playerTrack} playing={playerPlaying} onPlayingChange={onPlayerPlayingChange} onTrackEnded={onPlayerTrackEnded} onPrevious={onPlayerPrevious} onNext={onPlayerNext} mode={playerMode} onModeChange={onPlayerModeChange} restartToken={playerRestartToken} onClose={onPlayerClose} />
     </header>
   );
 }

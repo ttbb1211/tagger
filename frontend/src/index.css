@@ -215,10 +215,10 @@ button:disabled {
 
 .global-player {
   display: grid;
-  grid-template-columns: 30px minmax(150px, 250px) minmax(120px, 1fr) 78px 30px 30px;
+  grid-template-columns: 30px 30px 30px minmax(150px, 250px) minmax(120px, 1fr) 78px 30px 30px;
   align-items: center;
   gap: 10px;
-  min-width: min(520px, 48vw);
+  min-width: min(640px, 56vw);
   min-height: 48px;
   margin-left: auto;
   padding: 0 8px 0 16px;
@@ -301,6 +301,16 @@ button:disabled {
 .global-player-close {
   width: 30px;
   height: 30px;
+}
+
+/* 上一首 / 下一首：跟 .global-player-close 同尺寸，保持播放器右侧一列 30px */
+.global-player-skip {
+  width: 30px;
+  height: 30px;
+}
+
+.global-player-skip:disabled {
+  opacity: 0.4;
 }
 
 .global-player-loop.is-active {
@@ -7720,8 +7730,8 @@ button:disabled {
      不再硬撑 410px（那个下限加上品牌块与导航正好超出 1000px 出头的视口）。
      ⚠️ 末两列必须 ≥30px —— .global-player-close 就是 30px，列窄了它会顶出右边界。 */
   .global-player {
-    grid-template-columns: 28px minmax(0, 150px) minmax(90px, 1fr) 62px 30px 30px;
-    min-width: min(320px, 34vw);
+    grid-template-columns: 28px 28px 28px minmax(0, 150px) minmax(90px, 1fr) 62px 30px 30px;
+    min-width: min(380px, 38vw);
     gap: 6px;
     padding: 0 8px 0 10px;
   }
@@ -7846,7 +7856,7 @@ button:disabled {
   }
 
   .global-player {
-    min-width: min(300px, 30vw);
+    min-width: min(360px, 34vw);
   }
 
   .nav-item {
@@ -8091,7 +8101,7 @@ button:disabled {
   }
 
   .global-player {
-    grid-template-columns: 30px minmax(0, 1fr) 28px 30px;
+    grid-template-columns: 30px 30px 30px minmax(0, 1fr) 28px 30px;
     min-width: 0;
     flex: 1;
     gap: 8px;
