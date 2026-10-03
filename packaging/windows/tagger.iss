@@ -88,8 +88,8 @@ var
   ResultCode: Integer;
 begin
   Result := True;
-  { ⚠️ [Code] 段的字符串不做 Inno 常量转义，GUID 花括号直接写单层即可；
-    [Setup] 里 AppId 写 {{ 是另一套规则（条目值会做常量展开），别混用 }
+  { ⚠️ Pascal 字符串不做 Inno 常量转义，GUID 花括号直接写单层即可；
+    双花括号转义是条目值（如 AppId）那套展开规则，别混用 }
   KeyPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7E4A2C19-8B3D-4F6A-9C21-D5E8F0A63B47}_is1';
   if RegQueryStringValue(HKLM, KeyPath, 'UninstallString', UninstallString) then
   begin
