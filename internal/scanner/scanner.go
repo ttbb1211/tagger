@@ -379,6 +379,28 @@ func (s *Scanner) DraftTrack(file DiscoveredFile) domain.Track {
 	return track
 }
 
+// CueBoundAudio reports whether the root-relative audio file currently pairs
+// with a cue sheet, i.e. the scanner expands it into virtual tracks and never
+// indexes it as a standalone track.
+//
+// Directory reconcile needs this rule: such a whole-track master has no record
+// of its own in the index, so "file on disk without a matching record" must not
+// be read as "new file". Drafting it would enqueue a targeted scan that expands
+// the album back into virtual tracks, and the next reconcile would draft it
+// again — a self-sustaining rescan loop.
+func (s *Scanner) CueBoundAudio(relativePath string) bool {
+	relativePath = filepath.ToSlash(strings.TrimSpace(relativePath))
+	if relativePath == "" {
+		return false
+	}
+	absolutePath := filepath.Join(s.opts.Root, filepath.FromSlash(relativePath))
+	if !isSupportedAudio(absolutePath) || !cue.BindableAudioExt(filepath.Ext(absolutePath)) {
+		return false
+	}
+	_, ok := cue.ResolveSheet(filepath.Dir(absolutePath), filepath.Base(absolutePath))
+	return ok
+}
+
 func (s *Scanner) discover(ctx context.Context, targets ...string) ([]string, map[string]domain.FileFingerprint, []string, error) {
 	return s.discoverDepth(ctx, -1, targets...)
 }
