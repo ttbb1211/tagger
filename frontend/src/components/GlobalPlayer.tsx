@@ -20,6 +20,7 @@ interface GlobalPlayerProps {
   /** 播放模式由上层持有（取下一首要用），这里只负责展示与切换 */
   mode: PlayerMode;
   onModeChange: (mode: PlayerMode) => void;
+  onNotice?: (message: string) => void;
   /**
    * 递增即「重新加载并播放当前这首」。
    * 只有一个曲目的队列在「列表循环」下会绕回自己，光换 track 不会触发重载，靠它兜住。
@@ -56,7 +57,7 @@ function startPlayback(audio: HTMLAudioElement, onFailed: () => void, onStarted?
   }
 }
 
-export function GlobalPlayer({track, playing, onPlayingChange, onTrackEnded, onPrevious, onNext, mode, onModeChange, restartToken = 0, onClose}: GlobalPlayerProps) {
+export function GlobalPlayer({track, playing, onPlayingChange, onTrackEnded, onPrevious, onNext, mode, onModeChange, onNotice, restartToken = 0, onClose}: GlobalPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   // 「播完切下一首」期间抑制 <audio> 的 pause 事件：整轨非 WAV 的段尾是我们自己调 pause() 停的，
   // 浏览器随后补发的 pause 会把上层刚置上的「正在播放」又打回暂停。
@@ -206,7 +207,15 @@ export function GlobalPlayer({track, playing, onPlayingChange, onTrackEnded, onP
           onPlayingChange(false);
         }}
         onEnded={finishTrack}
-        onError={() => { advancingRef.current = false; onPlayingChange(false); }}
+        onError={() => {
+          advancingRef.current = false;
+          onPlayingChange(false);
+          if (track?.format === 'm4a' && /alac/i.test(track.properties.codec)) {
+            onNotice?.('无法播放此 M4A：它使用 ALAC 编码，当前 WebView2/Chromium 不提供 ALAC 解码器；文件和音频接口正常。');
+          } else {
+            onNotice?.('播放失败：当前浏览器无法解码或读取这首音频。');
+          }
+        }}
       />
       <button className={cn('icon-button', 'global-player-skip')} disabled={!track} title="上一首" aria-label="上一首" onClick={onPrevious}><SkipBack size={15} /></button>
       <button className="global-player-toggle" disabled={!track} title={track ? (playing ? '暂停播放' : '继续播放') : '暂无播放歌曲'} onClick={toggle}>

@@ -232,6 +232,7 @@ export function App() {
         onPlayerNext={skipNext}
         playerMode={playerMode}
         onPlayerModeChange={changePlayerMode}
+        onNotice={setNotice}
         playerRestartToken={playbackRestart}
         onPlayerClose={() => { setPlayerPlaying(false); setPlayerTrack(null); setPlayerQueue([]); setShuffleOrder([]); }}
       />

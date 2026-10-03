@@ -69,7 +69,7 @@ describe('TrackInspector', () => {
       />,
     );
 
-    expect(container.querySelector('.track-inspector')?.classList.contains('has-restore-draft')).toBe(true);
+    expect(container.querySelector('.inspector-banners .restore-draft-banner')).toBeInTheDocument();
     expect(screen.getByText('已加载历史快照')).toBeInTheDocument();
     await user.click(screen.getByRole('button', {name: '取消加载'}));
     expect(onDiscard).toHaveBeenCalledTimes(1);
@@ -446,6 +446,13 @@ describe('TrackInspector 正在播放提示', () => {
     const banner = container.querySelector('.now-playing-banner');
     expect(banner).not.toBeNull();
     expect(banner).toHaveTextContent('無心睡眠');
+    const inspector = container.querySelector('.track-inspector');
+    const banners = inspector?.querySelector('.inspector-banners');
+    const children = [...(inspector?.children ?? [])];
+    expect(banners?.contains(banner as HTMLDivElement)).toBe(true);
+    expect(children.indexOf(banners as Element)).toBeLessThan(children.findIndex((child) => child.classList.contains('inspector-tabs')));
+    expect(children.findIndex((child) => child.classList.contains('inspector-tabs'))).toBeLessThan(children.findIndex((child) => child.classList.contains('inspector-scroll')));
+    expect(children.findIndex((child) => child.classList.contains('inspector-scroll'))).toBeLessThan(children.findIndex((child) => child.classList.contains('inspector-actions')));
     await user.click(screen.getByRole('button', {name: '查看这首'}));
     expect(onSelectTrack).toHaveBeenCalledWith('trk-other');
   });

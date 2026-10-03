@@ -15,6 +15,7 @@ function renderPlayer(overrides: Partial<Pick<ComponentProps<typeof GlobalPlayer
   const onNext = vi.fn();
   const onModeChange = vi.fn();
   const onClose = vi.fn();
+  const onNotice = vi.fn();
   const view = render(
     <GlobalPlayer
       track={track}
@@ -25,13 +26,14 @@ function renderPlayer(overrides: Partial<Pick<ComponentProps<typeof GlobalPlayer
       onPrevious={onPrevious}
       onNext={onNext}
       onModeChange={onModeChange}
+      onNotice={onNotice}
       onClose={onClose}
       {...overrides}
     />,
   );
   const audio = view.container.querySelector('audio');
   if (!audio) throw new Error('player audio element missing');
-  return {audio, view, onPlayingChange, onTrackEnded, onPrevious, onNext, onModeChange, onClose};
+  return {audio, view, onPlayingChange, onTrackEnded, onPrevious, onNext, onModeChange, onNotice, onClose};
 }
 
 describe('GlobalPlayer 播放模式', () => {
@@ -108,5 +110,25 @@ describe('GlobalPlayer 播放模式', () => {
     renderPlayer({track: null});
     expect(screen.getByTitle('上一首')).toBeDisabled();
     expect(screen.getByTitle('下一首')).toBeDisabled();
+  });
+
+  it('explains that ALAC-in-M4A cannot be decoded in the current Chromium player', () => {
+    const alacTrack = {
+      ...track,
+      format: 'm4a' as const,
+      properties: {...track.properties, codec: 'ALAC'},
+    };
+    const {audio, onNotice, onPlayingChange} = renderPlayer({track: alacTrack});
+    fireEvent.error(audio);
+
+    expect(onPlayingChange).toHaveBeenCalledWith(false);
+    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('使用 ALAC 编码'));
+    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('不提供 ALAC 解码器'));
+  });
+
+  it('shows a generic playback error for other unsupported audio', () => {
+    const {audio, onNotice} = renderPlayer();
+    fireEvent.error(audio);
+    expect(onNotice).toHaveBeenCalledWith('播放失败：当前浏览器无法解码或读取这首音频。');
   });
 });

@@ -2168,17 +2168,17 @@ button:disabled {
 .track-inspector {
   position: relative;
   display: grid;
-  grid-template-rows: auto 43px minmax(0, 1fr) 54px;
+  grid-template-rows: auto auto 43px minmax(0, 1fr) 54px;
   min-width: 0;
   overflow: hidden;
   border-left: 1px solid var(--line-strong);
 }
 
-/* The historical snapshot notice is a compact, optional row. Without this
-   modifier the inspector keeps its original four-row grid; with it, the
-   notice must not consume the scroll area's 1fr track. */
-.track-inspector.has-restore-draft {
-  grid-template-rows: auto 43px auto minmax(0, 1fr) 54px;
+/* Keep all optional banners in one stable grid row. A banner must never shift
+   the tabs onto the 1fr row and squeeze the tag editor down to the footer. */
+.inspector-banners {
+  display: grid;
+  min-width: 0;
 }
 
 .inspector-empty {
@@ -7601,16 +7601,12 @@ button:disabled {
     right: 0;
     bottom: 0;
     width: min(430px, 94vw);
-    grid-template-rows: auto auto 43px minmax(0, 1fr) 54px;
+    grid-template-rows: auto auto auto 43px minmax(0, 1fr) 54px;
     background: var(--paper-2);
     border-left: 1px solid var(--ink);
     box-shadow: var(--shadow);
     transform: translateX(102%);
     transition: transform 220ms ease;
-  }
-
-  .track-inspector.has-restore-draft {
-    grid-template-rows: auto auto 43px auto minmax(0, 1fr) 54px;
   }
 
   .track-inspector.is-mobile-open {
@@ -7903,11 +7899,7 @@ button:disabled {
   }
 
   .track-inspector {
-    grid-template-rows: auto auto 43px minmax(0, 1fr) 54px;
-  }
-
-  .track-inspector.has-restore-draft {
-    grid-template-rows: auto auto 43px auto minmax(0, 1fr) 54px;
+    grid-template-rows: auto auto auto 43px minmax(0, 1fr) 54px;
   }
 
   .sidebar-mobile-head,

@@ -323,7 +323,7 @@ export function TrackInspector({
   };
 
   return (
-	<aside className={cn('track-inspector', mobileOpen && 'is-mobile-open', indexing && 'is-syncing', restoreDraft?.trackId === track.id && 'has-restore-draft')} aria-busy={indexing}>
+	<aside className={cn('track-inspector', mobileOpen && 'is-mobile-open', indexing && 'is-syncing')} aria-busy={indexing}>
       <div className="inspector-mobile-head">
         <span>曲目详情</span>
         <button title="关闭详情" onClick={onCloseMobile}><X size={18} /></button>
@@ -363,22 +363,34 @@ export function TrackInspector({
         </button>
 	  </div>
 
-	  {playingElsewhere && playerTrack && (
-    <div className="now-playing-banner">
-      <div>
-        <strong>正在播放</strong>
-        <span>{playerTrack.title || playerTrack.fileName}</span>
-      </div>
-      <button type="button" onClick={() => onSelectTrack?.(playerTrack.id)}>查看这首</button>
-    </div>
-  )}
+      <div className="inspector-banners">
+        {playingElsewhere && playerTrack && (
+          <div className="now-playing-banner">
+            <div>
+              <strong>正在播放</strong>
+              <span>{playerTrack.title || playerTrack.fileName}</span>
+            </div>
+            <button type="button" onClick={() => onSelectTrack?.(playerTrack.id)}>查看这首</button>
+          </div>
+        )}
 
-  {indexing && (
-		<div className="track-sync-banner">
-		  <LoaderCircle size={14} className={track.syncState === 'draft' ? 'spin' : undefined} />
-		  <span>{track.syncState === 'error' ? '文件解析失败，可重新读取后再编辑' : '正在读取标签、封面和技术信息，完成后自动解锁操作'}</span>
-		</div>
-	  )}
+        {indexing && (
+          <div className="track-sync-banner">
+            <LoaderCircle size={14} className={track.syncState === 'draft' ? 'spin' : undefined} />
+            <span>{track.syncState === 'error' ? '文件解析失败，可重新读取后再编辑' : '正在读取标签、封面和技术信息，完成后自动解锁操作'}</span>
+          </div>
+        )}
+
+        {restoreDraft?.trackId === track.id && (
+          <div className="restore-draft-banner">
+            <div>
+              <strong>已加载历史快照</strong>
+              <span>{restoreDraft.label} · 当前只是编辑草稿，尚未写入文件</span>
+            </div>
+            <button type="button" onClick={onDiscardRestoreDraft}>取消加载</button>
+          </div>
+        )}
+      </div>
 
       <div className="inspector-tabs" role="tablist">
         {tabs.map((item) => (
@@ -394,16 +406,6 @@ export function TrackInspector({
           </button>
         ))}
       </div>
-
-      {restoreDraft?.trackId === track.id && (
-        <div className="restore-draft-banner">
-          <div>
-            <strong>已加载历史快照</strong>
-            <span>{restoreDraft.label} · 当前只是编辑草稿，尚未写入文件</span>
-          </div>
-          <button type="button" onClick={onDiscardRestoreDraft}>取消加载</button>
-        </div>
-      )}
 
 	  <fieldset className="inspector-scroll" disabled={indexing}>
         {tab === 'tags' && (
