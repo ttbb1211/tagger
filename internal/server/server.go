@@ -2122,7 +2122,7 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		return
 	}
 
-	etag := `"` + track.Revision + `"`
+	etag := audioETag(track.Revision, false)
 	c.Header("ETag", etag)
 	c.Header("Accept-Ranges", "bytes")
 	c.SetContentType(audioContentType(track.Format))
@@ -2135,7 +2135,8 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 	size := info.Size()
 	start, end := int64(0), size-1
 	status := consts.StatusOK
-	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 {
+	// If-Range 校验值不匹配时按 RFC 忽略 Range、整段重传（见 ifRangeRejects）
+	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 && !ifRangeRejects(c.Request.Header.Peek("If-Range"), etag) {
 		maxInt := int64(^uint(0) >> 1)
 		if size > maxInt || size == 0 {
 			_ = file.Close()
@@ -2284,8 +2285,9 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 	virtualSize := headerLen + segDataLen
 
 	// ETag 追加 -cue 后缀：cue 切片与整文件是不同表示，同时让旧版
-	// （无合成头）缓存条目自然失效
-	etag := `"` + track.Revision + `-cue"`
+	// （无合成头）缓存条目自然失效；再带 audioSliceScheme，让切片算法
+	// 升级而文件未变时的旧缓存也失效（见 audioSliceScheme）
+	etag := audioETag(track.Revision, true)
 	c.Header("ETag", etag)
 	c.Header("Accept-Ranges", "bytes")
 	c.SetContentType("audio/wav")
@@ -2297,7 +2299,9 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 
 	start, end := int64(0), virtualSize-1
 	status := consts.StatusOK
-	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 {
+	// If-Range 校验值不匹配时按 RFC 忽略 Range、整段重传（见 ifRangeRejects）：
+	// 否则客户端会把新切片拼进旧缓存条目 → 新旧混杂（白噪音断续）
+	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 && !ifRangeRejects(c.Request.Header.Peek("If-Range"), etag) {
 		if startPos, endPos, rangeErr := app.ParseByteRange(rawRange, int(virtualSize)); rangeErr == nil {
 			start, end = int64(startPos), int64(endPos)
 			status = consts.StatusPartialContent
@@ -2342,6 +2346,49 @@ func audioETagMatches(header []byte, etag string) bool {
 		}
 	}
 	return false
+}
+
+// audioSliceScheme 是「音频下发方案」的版本号。
+//
+// ★ 任何会改变下发字节的改动（切段算法、合成 WAV 头、区间语义……）都必须 +1，
+// 并同步前端 frontend/src/api/index.ts 的 AUDIO_CACHE_SCHEME。
+//
+// 为什么必须有它：track.Revision = sha256(相对路径 + size + mtime + 原始标签)，
+// 只反映「文件本身」。程序升级、切片算法改了、文件却没变时，Revision 不变
+// ⇒ ETag 与前端 URL 都不变 ⇒ 浏览器（尤其 WebView2）继续用旧缓存里的字节。
+//
+// 2026-10-03 实测踩到：v1.6.9 把整轨 WAV 切片起点改成「四舍五入 + blockAlign 对齐」，
+// 服务端下发的字节已逐字节正确，客户端却仍播白噪音——缓存里 v1.6.8 的错位块（15 MB）
+// 与新拉的对齐块（20 MB）交替命中，症状正是「噪音—正常几秒—噪音」反复。
+//
+//	1: 初版
+//	2: cue 切片起点改为「四舍五入 + blockAlign 对齐」（v1.6.10 补版本号）
+const audioSliceScheme = "2"
+
+// audioETag 构造音频响应的 ETag，把 audioSliceScheme 编进去（见上）。
+func audioETag(revision string, cueSlice bool) string {
+	if cueSlice {
+		return `"` + revision + "-cue" + audioSliceScheme + `"`
+	}
+	return `"` + revision + "-a" + audioSliceScheme + `"`
+}
+
+// ifRangeRejects 判断 If-Range 校验值是否与当前 ETag 不符。
+//
+// 按 RFC 9110 §13.1.5，If-Range 不匹配时服务端**必须忽略 Range、返回 200 完整内容**。
+// 若照旧回 206，客户端会把「新数据」拼接进「旧缓存条目」形成新旧混杂
+// （实测就是 15 MB 旧块 + 20 MB 新块交替播放 → 白噪音断续）。
+// 弱校验值（W/）不可用于 Range，一律视为不匹配；日期形式的校验值我们没有
+// Last-Modified 可比，同样按不匹配处理（保守但正确：退化为整段重传）。
+func ifRangeRejects(header []byte, etag string) bool {
+	value := strings.TrimSpace(string(header))
+	if value == "" {
+		return false
+	}
+	if strings.HasPrefix(value, "W/") {
+		return true
+	}
+	return value != etag
 }
 
 func audioContentType(format domain.TrackFormat) string {

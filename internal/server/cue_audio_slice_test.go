@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cloudwego/hertz/pkg/app"
@@ -105,6 +106,139 @@ func TestCueWAVSliceServesSampleAlignedPCM(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint32(body[dataStart:]); got != uint32(493920/blockAlign) {
 		t.Fatalf("首个采样块号 = %d, want %d", got, 493920/blockAlign)
+	}
+}
+
+// audioETag 必须把「下发方案版本号」编进去，且 cue 切片与整文件是两个不同表示。
+//
+// 这是 2026-10-03 第二个 bug 的修复：ETag 原本只由 track.Revision（文件本身）决定，
+// 程序升级改了切片算法、文件却没变 → ETag 不变 → 浏览器继续命中旧缓存里的错位字节。
+func TestAudioETagCarriesScheme(t *testing.T) {
+	whole := audioETag("rev1", false)
+	cue := audioETag("rev1", true)
+	if whole == cue {
+		t.Fatalf("cue 切片与整文件 ETag 不应相同: %q", whole)
+	}
+	for _, etag := range []string{whole, cue} {
+		if !strings.Contains(etag, audioSliceScheme) {
+			t.Fatalf("ETag %q 未包含方案号 %q", etag, audioSliceScheme)
+		}
+		if !strings.HasPrefix(etag, `"rev1-`) || !strings.HasSuffix(etag, `"`) {
+			t.Fatalf("ETag %q 格式异常", etag)
+		}
+	}
+	if audioSliceScheme == "1" {
+		t.Fatalf("切片算法已改（四舍五入 + blockAlign 对齐），方案号必须 > 1")
+	}
+}
+
+// ifRangeRejects：按 RFC 9110 §13.1.5，校验值不匹配时必须忽略 Range、整段重传。
+// 否则客户端会把新切片拼进旧缓存条目 → 新旧混杂 → 白噪音断续。
+func TestIfRangeRejects(t *testing.T) {
+	etag := audioETag("rev1", true)
+	cases := []struct {
+		name   string
+		header string
+		want   bool
+	}{
+		{"未带 If-Range 时不禁用 Range", "", false},
+		{"校验值一致 → 允许 206", etag, false},
+		{"校验值不一致 → 忽略 Range", `"rev1-cue1"`, true},
+		{"旧版无方案号 ETag → 忽略 Range", `"rev1-cue"`, true},
+		{"弱校验值不可用于 Range", "W/" + etag, true},
+		{"日期形式无从比对 → 忽略 Range", "Wed, 21 Oct 2015 07:28:00 GMT", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ifRangeRejects([]byte(tc.header), etag); got != tc.want {
+				t.Fatalf("ifRangeRejects(%q) = %v, want %v", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
+// 端到端：cue 切片响应的 ETag 带 -cue2；旧 ETag 作 If-Range 时必须整段重传而不是 206。
+func TestCueWAVSliceETagAndIfRange(t *testing.T) {
+	s := newTestServer(t)
+	root := s.writer.Root()
+
+	const (
+		byteRate   = 176400
+		blockAlign = 4
+		dataStart  = 44
+		dataSize   = 800000 // 足够大，段长不会被父文件尾部截断
+		startSec   = 2.8
+	)
+	parent := buildTestWAV(byteRate, blockAlign, dataStart, dataSize)
+	name := "CueETag.wav"
+	if err := os.WriteFile(filepath.Join(root, name), parent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	track := domain.Track{
+		ID:                 "trk-cue-etag",
+		Format:             domain.FormatWAV,
+		CuePath:            "CueETag.cue",
+		CueTrackNumber:     4,
+		StartOffsetSeconds: startSec,
+		EndOffsetSeconds:   startSec + 1,
+		Revision:           "rev1",
+	}
+	s.h.Engine.GET("/__test/cueslice-etag", func(_ context.Context, c *app.RequestContext) {
+		file, err := os.Open(filepath.Join(root, name))
+		if err != nil {
+			c.SetStatusCode(500)
+			return
+		}
+		if !s.serveCueWAVSlice(c, file, int64(len(parent)), track) {
+			_ = file.Close()
+			c.SetStatusCode(500)
+		}
+	})
+
+	segLen := cueOffsetBytes(track.EndOffsetSeconds-track.StartOffsetSeconds, byteRate, blockAlign)
+	virtualSize := int64(44) + segLen
+	wantETag := `"rev1-cue2"`
+
+	// 1) 新 ETag 带方案号，整段返回
+	resp := ut.PerformRequest(s.h.Engine, "GET", "/__test/cueslice-etag", nil)
+	if resp.Code != 200 {
+		t.Fatalf("首次请求 status = %d", resp.Code)
+	}
+	if got := resp.Header().Get("ETag"); got != wantETag {
+		t.Fatalf("ETag = %q, want %q", got, wantETag)
+	}
+	if int64(resp.Body.Len()) != virtualSize {
+		t.Fatalf("整段长度 = %d, want %d", resp.Body.Len(), virtualSize)
+	}
+
+	// 2) If-None-Match 命中新 ETag → 304
+	resp = ut.PerformRequest(s.h.Engine, "GET", "/__test/cueslice-etag", nil,
+		ut.Header{Key: "If-None-Match", Value: wantETag})
+	if resp.Code != 304 {
+		t.Fatalf("If-None-Match 命中应 304，实际 %d", resp.Code)
+	}
+
+	// 3) 旧版 ETag 作 If-Range → 必须忽略 Range、整段重传（否则新旧字节混杂）
+	resp = ut.PerformRequest(s.h.Engine, "GET", "/__test/cueslice-etag", nil,
+		ut.Header{Key: "Range", Value: "bytes=0-99"},
+		ut.Header{Key: "If-Range", Value: `"rev1-cue"`})
+	if resp.Code != 200 {
+		t.Fatalf("If-Range 不匹配时应忽略 Range 返回 200，实际 %d", resp.Code)
+	}
+	if int64(resp.Body.Len()) != virtualSize {
+		t.Fatalf("整段重传长度 = %d, want %d", resp.Body.Len(), virtualSize)
+	}
+
+	// 4) 当前 ETag 作 If-Range → 正常 206
+	resp = ut.PerformRequest(s.h.Engine, "GET", "/__test/cueslice-etag", nil,
+		ut.Header{Key: "Range", Value: "bytes=0-99"},
+		ut.Header{Key: "If-Range", Value: wantETag})
+	if resp.Code != 206 {
+		t.Fatalf("If-Range 匹配时应 206，实际 %d", resp.Code)
+	}
+	if resp.Body.Len() != 100 {
+		t.Fatalf("206 长度 = %d, want 100", resp.Body.Len())
 	}
 }
 

@@ -411,19 +411,38 @@ func TestAudioAPIProvidesRangeStreamAndETag(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// ETag 带下发方案号（见 audioSliceScheme）：改了切片算法而文件未变时也能让缓存失效
+	wantETag := audioETag(track.Revision, false)
 	ranged := ut.PerformRequest(s.h.Engine, "GET", "/api/v1/tracks/"+track.ID+"/audio", nil,
 		ut.Header{Key: "Range", Value: "bytes=2-5"})
 	if ranged.Code != 206 || ranged.Body.String() != "2345" ||
 		ranged.Result().Header.Get("Content-Range") != "bytes 2-5/10" ||
 		ranged.Result().Header.Get("Accept-Ranges") != "bytes" ||
 		ranged.Result().Header.Get("Content-Type") != "audio/mpeg" ||
-		ranged.Result().Header.Get("ETag") != `"`+track.Revision+`"` {
+		ranged.Result().Header.Get("ETag") != wantETag {
 		t.Fatalf("range audio = %d contentRange=%q contentType=%q body=%q", ranged.Code,
 			ranged.Result().Header.Get("Content-Range"), ranged.Result().Header.Get("Content-Type"), ranged.Body.String())
 	}
 
+	// If-Range 不匹配时按 RFC 9110 §13.1.5 忽略 Range、整段重传：
+	// 否则客户端会把新字节拼进旧缓存条目，形成新旧混杂
+	staleRange := ut.PerformRequest(s.h.Engine, "GET", "/api/v1/tracks/"+track.ID+"/audio", nil,
+		ut.Header{Key: "Range", Value: "bytes=2-5"},
+		ut.Header{Key: "If-Range", Value: `"` + track.Revision + `"`}) // 旧格式 ETag（无方案号）
+	if staleRange.Code != 200 || staleRange.Body.String() != string(payload) {
+		t.Fatalf("If-Range 不匹配时应整段重传: code=%d body=%q", staleRange.Code, staleRange.Body.String())
+	}
+
+	// If-Range 匹配时正常走 206
+	freshRange := ut.PerformRequest(s.h.Engine, "GET", "/api/v1/tracks/"+track.ID+"/audio", nil,
+		ut.Header{Key: "Range", Value: "bytes=2-5"},
+		ut.Header{Key: "If-Range", Value: wantETag})
+	if freshRange.Code != 206 || freshRange.Body.String() != "2345" {
+		t.Fatalf("If-Range 匹配时应 206: code=%d body=%q", freshRange.Code, freshRange.Body.String())
+	}
+
 	notModified := ut.PerformRequest(s.h.Engine, "GET", "/api/v1/tracks/"+track.ID+"/audio", nil,
-		ut.Header{Key: "If-None-Match", Value: `"` + track.Revision + `"`})
+		ut.Header{Key: "If-None-Match", Value: wantETag})
 	if notModified.Code != 304 || notModified.Body.Len() != 0 {
 		t.Fatalf("audio etag = %d body=%q", notModified.Code, notModified.Body.String())
 	}

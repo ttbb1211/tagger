@@ -97,6 +97,11 @@ func runWebViewWindow(url, dataDir, appVersion string) (ok bool) {
 			ok = false
 		}
 	}()
+	// ★ 启动前先清一次缓存：此刻 WebView2 还没创建，缓存文件一定没被占用，
+	// 删除必定成功。关窗时清则不可靠——msedgewebview2.exe 子进程常常还没退干净，
+	// 文件被占着删不掉。两处都做：这里是「保证」，关窗那次是「尽量」。
+	clearWebViewCache(dataDir)
+
 	windowWidth, windowHeight := windowSizeForScreen()
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		DataPath:  filepath.Join(dataDir, "webview"),
@@ -114,9 +119,29 @@ func runWebViewWindow(url, dataDir, appVersion string) (ok bool) {
 	}
 	w.SetTitle("Tagger " + appVersion)
 	w.Navigate(url)
-	defer w.Destroy()
-	w.Run()
+	w.Run()     // 阻塞至窗口关闭（点标题栏 ×）
+	w.Destroy() // 发 WM_CLOSE，尽量让 WebView2 先释放
+	clearWebViewCache(dataDir)
 	return true
+}
+
+// clearWebViewCache 删除 WebView2 的磁盘缓存目录。
+//
+// ★ 为什么必须清：音频响应的 ETag 只由「文件本身」决定（相对路径+大小+mtime+标签）。
+// 程序升级改了切片算法、文件却没变时，ETag 与前端 URL 都不变，
+// 浏览器（尤其 WebView2）会继续用旧缓存里的字节 —— 2026-10-03 实测症状是
+// 「白噪音—正常几秒—白噪音」反复，因为旧错位块与新对齐块混在同一份缓存里交替命中。
+// audioSliceScheme / AUDIO_CACHE_SCHEME 版本号能覆盖「以后」的升级，
+// 这里再兜一层，保证每次启动都是干净缓存。
+//
+// 只删 Default/Cache（媒体、图片缓存），保留同级的 Cookies、Local Storage、
+// IndexedDB —— 那些丢了会退出登录、丢界面偏好。
+// 失败静默：缓存删不掉不该影响启动或关窗退出。
+func clearWebViewCache(dataDir string) {
+	if dataDir == "" {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(dataDir, "webview", "EBWebView", "Default", "Cache"))
 }
 
 // ensureDataDirExists 保证 WebView2 的用户数据目录存在。

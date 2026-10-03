@@ -378,9 +378,14 @@ export function candidateArtworkURL(candidate: MatchCandidate): string | undefin
   return `/api/v1/matches/candidates/${encodeURIComponent(candidate.artworkRefId || candidate.id)}/artwork`;
 }
 
+// AUDIO_CACHE_SCHEME 必须与后端 internal/server/server.go 的 audioSliceScheme 保持一致。
+// 任何改变音频下发字节的改动（切段算法、合成 WAV 头……）都要两边一起 +1，
+// 否则浏览器（尤其 WebView2）会继续命中旧缓存里的字节。
+export const AUDIO_CACHE_SCHEME = 2;
+
 export function audioURL(track: Track): string | undefined {
 	if (apiReadMode === 'mock' || (track.syncState && track.syncState !== 'indexed')) return undefined;
-  return `/api/v1/tracks/${encodeURIComponent(track.id)}/audio?revision=${encodeURIComponent(track.revision)}`;
+  return `/api/v1/tracks/${encodeURIComponent(track.id)}/audio?revision=${encodeURIComponent(track.revision)}&s=${AUDIO_CACHE_SCHEME}`;
 }
 
 export async function updateArtwork(trackId: string, file: File | null, maxSize = 0): Promise<Track> {
