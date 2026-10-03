@@ -155,6 +155,11 @@ func main() {
 		musicDir = emptyRoot
 		usingEmptyLibrary = true
 	}
+	// ★ 启动链路分阶段日志：goose 迁移行之后到 "tagger started" 之间原本整段静默，
+	// 一旦某个阶段卡住（曾出现卡在曲库目录注册上），黑窗里没有任何线索。
+	// 下面几条 Info 让「下次卡在哪一步」一眼可判，代价可以忽略。
+	logger.Info("startup: library root resolved",
+		"root", musicDir, "persisted", usingPersistedLibrary, "emptyFallback", usingEmptyLibrary)
 	engine := taglibwasm.New()
 	musicScanner, err := scanner.New(engine, scanner.Options{
 		Root:        musicDir,
@@ -173,6 +178,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	logger.Info("startup: loading library index", "root", musicScanner.Root())
 	libraryService, err := library.New(ctx, musicScanner, dataStore)
 	if usingEmptyLibrary {
 		if cleanupErr := dataStore.DeleteLibraryByRoot(ctx, musicScanner.Root()); cleanupErr != nil {
@@ -186,6 +192,8 @@ func main() {
 		logger.Error("initial library scan failed", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("startup: library index ready",
+		"root", musicScanner.Root(), "tracks", libraryService.Library().TrackCount)
 	tagWriter, err := filewrite.New(musicScanner.Root(), engine)
 	if err != nil {
 		logger.Error("initialize safe tag writer", "error", err)
@@ -608,10 +616,12 @@ func main() {
 			}
 			return enqueueScan(ctx, scanner.ScanTarget, result.Pending, " 文件变化扫描")
 		})
+		logger.Info("startup: registering library watcher", "root", libraryService.Root(), "mode", cfg.WatchMode)
 		if err := libraryWatcher.Start(watchContext, libraryService.Root()); err != nil {
 			logger.Warn("initialize library watcher; directory polling fallback enabled", "error", err)
 			libraryService.SetWatchStatus(cfg.WatchMode, domain.WatchStateDegraded)
 		} else {
+			logger.Info("startup: library watcher registered", "root", libraryService.Root())
 			libraryService.SetWatchStatus(cfg.WatchMode, domain.WatchStateHealthy)
 		}
 		go func() {
