@@ -69,9 +69,49 @@ var
   MusicDirPage: TInputDirWizardPage;
   SkipCheckbox: TNewCheckBox;
   DeleteData: Boolean;
+  PrevInstallDir: string;
+
+{ 覆盖安装前先卸载旧版（v1.6.6 新增）。
+  ⚠️ Inno Setup 对「同一 AppId 已装旧版」的默认行为只是覆盖文件，
+  不会先卸载、也不弹任何提示（v1.6.5 覆盖安装实测：无「检测到旧版」询问，
+  旧版卸载器也未运行）。这里在 InitializeSetup 显式查注册表卸载项：
+  - 发现旧版 → 弹窗询问，选「是」用 /SILENT 运行旧版卸载器并等待结束。
+    旧版 v1.6.2+ 的卸载器会先弹「是否保留 TaggerData」（默认保留），
+    用户对数据去留仍有决定权；不传 /SUPPRESSMSGBOXES 就是为了保住这条提示。
+  - 选「否」→ 跳过卸载继续覆盖安装（文件 ignoreversion 覆盖，仍可升级成功）。
+  - 先记下旧 InstallLocation，卸载会删掉注册表项、UsePreviousAppDir 就没有
+    预填来源了，故在 InitializeWizard 里手动回填到安装位置页（保住 v1.6.5
+    起的「预填上次目录」体验）。}
+function InitializeSetup(): Boolean;
+var
+  KeyPath, UninstallString, DisplayVersion: string;
+  ResultCode: Integer;
+begin
+  Result := True;
+  { ⚠️ [Code] 段的字符串不做 Inno 常量转义，GUID 花括号直接写单层即可；
+    [Setup] 里 AppId 写 {{ 是另一套规则（条目值会做常量展开），别混用 }
+  KeyPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{7E4A2C19-8B3D-4F6A-9C21-D5E8F0A63B47}_is1';
+  if RegQueryStringValue(HKLM, KeyPath, 'UninstallString', UninstallString) then
+  begin
+    RegQueryStringValue(HKLM, KeyPath, 'InstallLocation', PrevInstallDir);
+    if not RegQueryStringValue(HKLM, KeyPath, 'DisplayVersion', DisplayVersion) then
+      DisplayVersion := '未知版本';
+    if MsgBox(
+        '检测到本机已安装 Tagger ' + DisplayVersion + '。' + #13#10 + #13#10 +
+        '建议先卸载旧版再继续安装新版。' + #13#10 +
+        '曲库数据 TaggerData 默认保留，卸载旧版时会再次询问。' + #13#10 + #13#10 +
+        '要现在卸载旧版吗？',
+        mbConfirmation, MB_YESNO) = IDYES then
+      Exec(RemoveQuotes(UninstallString), '/SILENT /NORESTART', '',
+        SW_SHOW, ewWaitUntilTerminated, ResultCode);
+  end;
+end;
 
 procedure InitializeWizard;
 begin
+  { 旧版卸载后注册表已被清掉，这里手动回填上次安装目录（见 InitializeSetup 注释） }
+  if PrevInstallDir <> '' then
+    WizardForm.DirEdit.Text := PrevInstallDir;
   MusicDirPage := CreateInputDirPage(wpSelectDir,
     '选择音乐库目录', 'Tagger 将扫描并管理该目录下的音乐文件（会直接修改文件内嵌标签，请确保有备份）',
     '选择音乐库根目录，然后点击「下一步」。',
