@@ -17,6 +17,9 @@
   --warning: #b26d16;
   --danger: #b43b2e;
   --blue: #1f4d93;
+  /* 顶栏播放器歌名专用色（宝蓝）。不复用 --blue —— 那会连带改到任务页
+     .job-kind.kind-scan 徽章；四套主题各配一份，2026-10-04 老板定 */
+  --player-title: #0f52ba;
   --shadow: 0 18px 50px rgba(36, 31, 22, 0.12);
   --display: "Iowan Old Style", "Baskerville", "Noto Serif SC", "Songti SC", serif;
   --sans: "Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -41,6 +44,7 @@
   --warning: #e8a342;
   --danger: #ed725f;
   --blue: #81a9ed;
+  --player-title: #6f9df0;
   --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
@@ -61,6 +65,7 @@
   --warning: #a56a25;
   --danger: #a8483d;
   --blue: #486b9c;
+  --player-title: #0f52ba;
   --shadow: 0 18px 50px rgba(35, 59, 49, 0.12);
 }
 
@@ -81,6 +86,7 @@
   --warning: #a66b27;
   --danger: #a44236;
   --blue: #566d9c;
+  --player-title: #0f52ba;
   --shadow: 0 18px 50px rgba(81, 48, 31, 0.13);
 }
 
@@ -258,11 +264,12 @@ button:disabled {
 
 .global-player-copy strong {
   font-size: 12px;
-  /* 歌名用主题松绿（--success）而不是继承墨色：墨色虽对比最高，但在顶栏里
-     跟右侧时间/副标题一样「沉」；换松绿后歌名一眼能抓出来，且四套主题都有该变量、
-     会随主题自动换值（象牙白 #27645b / 灰绿 #2f6d5b / 陶土 #46715e / 午夜墨 #61a99d）。
-     字号字重刻意保持不变（12px / bold）—— 2026-10-04 老板定 */
-  color: var(--success);
+  /* 歌名用宝蓝（--player-title）而不是继承墨色：墨色虽对比最高，但在顶栏里
+     跟右侧时间/副标题一样「沉」；换宝蓝后歌名一眼能抓出来。四套主题各配一份
+     （象牙白/灰绿/陶土 #0f52ba，午夜墨提亮为 #6f9df0），对比度 6.4~6.5:1 过 AA。
+     字号字重刻意保持不变（12px / bold）。
+     2026-10-04 老板先定松绿（--success），同日改为宝蓝 —— 见手册 §4.24 */
+  color: var(--player-title);
 }
 
 .global-player-copy span,
