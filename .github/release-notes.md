@@ -52,7 +52,11 @@
 | `tagger_1.7.3_windows_amd64.zip` / 同名 `.sha256` | Windows 便携版及校验 |
 | `tagger_1.7.3_linux_amd64.tar.gz` / 同名 `.sha256` | Linux x86_64 |
 | `tagger_1.7.3_linux_arm64.tar.gz` / 同名 `.sha256` | Linux arm64 |
+| `tagger_1.7.3_darwin_amd64.tar.gz` / 同名 `.sha256` | macOS Intel x86_64 |
+| `tagger_1.7.3_darwin_arm64.tar.gz` / 同名 `.sha256` | macOS Apple Silicon arm64 |
 
 Windows 版依赖 WebView2 Runtime；旧版覆盖安装时注意选择之前的安装目录。服务端部署后应核对二进制版本与前端资产哈希。源码构建可运行 `make build VERSION=1.7.3`。
+
+macOS 的两个 tar.gz 由本 fork 从 v1.7.3 源码交叉编译（`GOOS=darwin`，未改动任何代码），解压后为单个 `tagger` 可执行文件，**服务模式**运行：`./tagger --music-dir ... --data-dir ...` 后用浏览器打开 <http://127.0.0.1:8080>。未做代码签名与公证，首次运行若被 Gatekeeper 拦截，执行 `xattr -dr com.apple.quarantine ./tagger` 放行。
 
 > 从 v1.6.13 及更早升级的用户：**v1.7.0 起 ALAC 编码的 M4A 已可在网页与 Windows 桌面端直接播放**（Go 后端实时软解为 PCM、流式下发 WAV，支持拖动进度）。ALAC 播放本身不需要重新扫描。

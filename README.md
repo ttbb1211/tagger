@@ -89,7 +89,7 @@ Tagger 是一个使用 Go 构建的本地音乐元数据管理工具。它把音
 - **系统信息里的仓库链接指向本 fork**（v1.7.2）：设置 →「系统与安全」→ 系统信息面板里的 `GitHub` 链接原先指向上游 `github.com/Ericwyn/tagger`，现改为本仓库 **`github.com/ttbb1211/tagger`**。
 - **CI 约定**：纯文档改动不触发构建（`paths-ignore`）；commit message 加 `[skip ci]` 可单次跳过。
 
-上述修复计划向上游提交 PR。**Windows / Linux 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.7.3）；macOS 暂未提供预编译产物，可参照下文「构建并启动」从源码构建。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
+上述修复计划向上游提交 PR。**Windows / Linux / macOS 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.7.3）；macOS 提供 `darwin_amd64` 与 `darwin_arm64` 两个 tar.gz（自 v1.7.3 起由本 fork 从源码交叉编译，运行方式同 Linux 服务模式，详见「支持的平台」）。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
 
 ## 一次典型的整理流程
 
@@ -204,11 +204,14 @@ Tagger 把“查询”和“写入”明确分开。一次批量补全不会直�
 | 平台 | 部署方式 |
 | --- | --- |
 | Windows 10/11（x64） | Releases 页**安装版 / 便携版**（v1.2.0 起，fork 提供） |
+| macOS 11+（Intel x64 / Apple Silicon arm64） | Releases 页预编译二进制（v1.7.3 起，fork 从源码交叉编译） |
 | Linux amd64 | Releases 页预编译二进制 / Docker 镜像 |
 | Linux arm64（甲骨文 A1、树莓派等） | Releases 页预编译二进制（v1.2.0 起）/ Docker 镜像 |
 | 群晖 / 威联通 / Unraid / TrueNAS | Docker 镜像 |
 
-二进制从 [Releases](https://github.com/ttbb1211/tagger/releases) 页下载（amd64 与 arm64 双架构）。Docker 镜像两个来源均可用、均为 amd64+arm64 双架构：本 fork 的 `ghcr.io/ttbb1211/tagger`（跟随 Releases 发版）与上游的 `ghcr.io/ericwyn/tagger`。其他平台可从源码交叉编译：项目以 `CGO_ENABLED=0` 构建，TagLib 以 WebAssembly 形式嵌入，交叉编译不需要 C 工具链。
+二进制从 [Releases](https://github.com/ttbb1211/tagger/releases) 页下载：Windows 为 amd64 安装版 / 便携版；Linux 与 macOS 均为 amd64（x86_64 / Intel）与 arm64（aarch64 / Apple Silicon）双架构，tar.gz 解压后即单个 `tagger` 可执行文件。macOS 版是**服务模式**（同 Linux）：运行 `./tagger --music-dir ... --data-dir ...` 后自行用浏览器打开 <http://127.0.0.1:8080>，不弹原生窗口。Docker 镜像两个来源均可用、均为 amd64+arm64 双架构：本 fork 的 `ghcr.io/ttbb1211/tagger`（跟随 Releases 发版）与上游的 `ghcr.io/ericwyn/tagger`。其他平台可从源码交叉编译：项目以 `CGO_ENABLED=0` 构建，TagLib 以 WebAssembly 形式嵌入，交叉编译不需要 C 工具链。
+
+> **macOS 首次运行提示**：预编译二进制未做代码签名与公证（notarization），直接双击可能被 Gatekeeper 拦下（「无法打开，因为 Apple 无法检查其是否包含恶意软件」）。在终端里执行 `xattr -dr com.apple.quarantine ./tagger` 后再运行即可；或在「系统设置 → 隐私与安全性」中点「仍要打开」。
 
 ### 构建要求
 
