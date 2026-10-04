@@ -1865,10 +1865,15 @@ button:disabled {
 .track-play-overlay {
   position: absolute;
   inset: 0;
+  /* 必须高于 .cover-image 的 z-index:4，否则有内嵌封面的曲目会把播放键盖住
+     （整轨 CUE 虚拟轨道无封面、走 .cover-missing 占位，才一直看得见 —— 2026-10-04 定位） */
+  z-index: 5;
   display: grid;
   place-items: center;
   border-radius: 3px;
-  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  /* 蒙版浓度 60%：既能看清居中的 ▶/⏸，又不会把封面糊掉（原 78% 时封面只剩轮廓）
+     —— 2026-10-04 老板定 */
+  background: color-mix(in srgb, var(--paper) 60%, transparent);
   color: var(--ink);
   opacity: 0;
   transition: opacity 120ms ease;
