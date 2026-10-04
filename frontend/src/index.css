@@ -20,6 +20,13 @@
   /* 顶栏播放器歌名专用色（宝蓝）。不复用 --blue —— 那会连带改到任务页
      .job-kind.kind-scan 徽章；四套主题各配一份，2026-10-04 老板定 */
   --player-title: #0f52ba;
+  /* 品牌图标（顶栏小圆标 = 黑胶唱片）。中心红标取自邓丽君《GREATEST HITS》
+     复黑版 Polydor 红标的 600DPI 扫描件（#db3a23），四套主题共用同一红 ——
+     亮色主题盘面是墨色、午夜墨盘面是米白，红标在两种盘面上对比度都过 3:1。
+     沟槽色必须随盘面明暗翻转，所以只有它需要在午夜墨里覆盖。
+      2026-10-04 老板定 */
+  --brand-red: #db3a23;
+  --brand-groove: #4d4e48;
   --shadow: 0 18px 50px rgba(36, 31, 22, 0.12);
   --display: "Iowan Old Style", "Baskerville", "Noto Serif SC", "Songti SC", serif;
   --sans: "Avenir Next", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -45,6 +52,8 @@
   --danger: #ed725f;
   --blue: #81a9ed;
   --player-title: #6f9df0;
+  /* 午夜墨盘面是米白（--ink 提亮），沟槽要转浅灰才看得见；红标不变 */
+  --brand-groove: #c9c6bc;
   --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 

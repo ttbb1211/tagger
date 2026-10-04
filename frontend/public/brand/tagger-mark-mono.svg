@@ -1,15 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">Tagger monochrome mark</title>
-  <desc id="desc">A monochrome solid vinyl record with a center hole and a metadata label.</desc>
+  <desc id="desc">A monochrome vinyl record with two grooves, a solid center label and a center hole.</desc>
   <style>
     .ink { fill: #191a17; }
+    .groove { fill: none; stroke: #191a17; stroke-width: 1.2; stroke-opacity: 0.55; vector-effect: non-scaling-stroke; }
     .paper { fill: #fffefa; }
     @media (prefers-color-scheme: dark) {
       .ink { fill: #f0eee5; }
+      .groove { stroke: #f0eee5; }
       .paper { fill: #181916; }
     }
   </style>
   <circle class="ink" cx="32" cy="32" r="26"/>
-  <circle class="paper" cx="32" cy="32" r="10"/>
-  <rect class="paper" x="22" y="12.5" width="20" height="6" rx="3"/>
+  <circle class="groove" cx="32" cy="32" r="23"/>
+  <circle class="groove" cx="32" cy="32" r="19.5"/>
+  <circle class="paper" cx="32" cy="32" r="11"/>
+  <circle class="ink" cx="32" cy="32" r="4"/>
 </svg>

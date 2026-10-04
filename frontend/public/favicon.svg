@@ -1,15 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tagger">
   <style>
     .disc { fill: #191a17; }
+    .groove { fill: none; stroke: #4d4e48; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+    .label { fill: #db3a23; }
     .hole { fill: #fffefa; }
-    .label { fill: #e84b2c; }
     @media (prefers-color-scheme: dark) {
       .disc { fill: #f0eee5; }
+      .groove { stroke: #c9c6bc; }
       .hole { fill: #181916; }
-      .label { fill: #ff6748; }
     }
   </style>
   <circle class="disc" cx="32" cy="32" r="26"/>
-  <circle class="hole" cx="32" cy="32" r="10"/>
-  <rect class="label" x="22" y="12.5" width="20" height="6" rx="3"/>
+  <circle class="groove" cx="32" cy="32" r="23"/>
+  <circle class="groove" cx="32" cy="32" r="19.5"/>
+  <circle class="label" cx="32" cy="32" r="11"/>
+  <circle class="hole" cx="32" cy="32" r="4"/>
 </svg>
