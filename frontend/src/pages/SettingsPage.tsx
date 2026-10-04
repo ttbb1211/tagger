@@ -58,8 +58,8 @@ const defaultTestQuery: CandidateSearchQuery = {
 
 const historyRetentionKey = 'tagger-history-retention';
 const providerTestQueryKey = 'tagger-provider-test-query-v1';
-const taggerRepositoryURL = 'https://github.com/Ericwyn/tagger';
-const taggerRepositoryLabel = 'github.com/Ericwyn/tagger';
+const taggerRepositoryURL = 'https://github.com/ttbb1211/tagger';
+const taggerRepositoryLabel = 'github.com/ttbb1211/tagger';
 
 function readProviderTestQuery(): CandidateSearchQuery {
   try {

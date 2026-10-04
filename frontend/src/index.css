@@ -258,6 +258,11 @@ button:disabled {
 
 .global-player-copy strong {
   font-size: 12px;
+  /* 歌名用主题松绿（--success）而不是继承墨色：墨色虽对比最高，但在顶栏里
+     跟右侧时间/副标题一样「沉」；换松绿后歌名一眼能抓出来，且四套主题都有该变量、
+     会随主题自动换值（象牙白 #27645b / 灰绿 #2f6d5b / 陶土 #46715e / 午夜墨 #61a99d）。
+     字号字重刻意保持不变（12px / bold）—— 2026-10-04 老板定 */
+  color: var(--success);
 }
 
 .global-player-copy span,

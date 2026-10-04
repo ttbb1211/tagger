@@ -307,8 +307,8 @@ describe('SettingsPage provider diagnostics', () => {
 
     await user.click(screen.getByRole('button', {name: /系统/}));
     expect(await screen.findByText('1.0.2')).toBeInTheDocument();
-    expect(screen.getByRole('link', {name: /github\.com\/Ericwyn\/tagger/i})).toHaveAttribute('href', 'https://github.com/Ericwyn/tagger');
-    expect(screen.getByRole('link', {name: /github\.com\/Ericwyn\/tagger/i})).toHaveAttribute('target', '_blank');
+    expect(screen.getByRole('link', {name: /github\.com\/ttbb1211\/tagger/i})).toHaveAttribute('href', 'https://github.com/ttbb1211/tagger');
+    expect(screen.getByRole('link', {name: /github\.com\/ttbb1211\/tagger/i})).toHaveAttribute('target', '_blank');
     expect(await screen.findByText('127.0.0.1:8090')).toBeInTheDocument();
     expect(screen.queryByDisplayValue('127.0.0.1:8090')).not.toBeInTheDocument();
     const retention = screen.getByRole('combobox', {name: '历史保留次数'});
