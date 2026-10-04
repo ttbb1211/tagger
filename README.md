@@ -89,7 +89,7 @@ Tagger 是一个使用 Go 构建的本地音乐元数据管理工具。它把音
 - **系统信息里的仓库链接指向本 fork**（v1.7.2）：设置 →「系统与安全」→ 系统信息面板里的 `GitHub` 链接原先指向上游 `github.com/Ericwyn/tagger`，现改为本仓库 **`github.com/ttbb1211/tagger`**。
 - **CI 约定**：纯文档改动不触发构建（`paths-ignore`）；commit message 加 `[skip ci]` 可单次跳过。
 
-上述修复计划向上游提交 PR。**Windows/macOS/Linux 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.7.3）。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
+上述修复计划向上游提交 PR。**Windows / Linux 用户可直接从 [Releases](https://github.com/ttbb1211/tagger/releases) 下载安装包与各架构二进制**（当前 v1.7.3）；macOS 暂未提供预编译产物，可参照下文「构建并启动」从源码构建。注意：下文「快速开始」中的 Docker 镜像名仍指向上游 `ghcr.io/ericwyn/tagger`（fork 未改），自建镜像请直接用本仓库源码 `docker build`。
 
 ## 一次典型的整理流程
 
