@@ -5,9 +5,9 @@ go 1.25.7
 require (
 	github.com/cloudwego/hertz v0.10.6
 	github.com/fsnotify/fsnotify v1.5.4
-	github.com/getlantern/systray v1.2.2
 	github.com/jchv/go-webview2 v0.0.0-20260205173254-56598839c808
 	github.com/longbridgeapp/opencc v0.3.13
+	github.com/mycophonic/saprobe-alac v1.0.0-rc2
 	github.com/pressly/goose/v3 v3.27.3
 	go.senan.xyz/taglib v0.14.0
 	golang.org/x/image v0.35.0
@@ -24,13 +24,6 @@ require (
 	github.com/cloudwego/gopkg v0.2.0 // indirect
 	github.com/cloudwego/netpoll v0.7.5 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
-	github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7 // indirect
-	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7 // indirect
-	github.com/getlantern/hex v0.0.0-20190417191902-c6586a6fe0b7 // indirect
-	github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55 // indirect
-	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f // indirect
-	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
@@ -39,7 +32,6 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/tetratelabs/wazero v1.11.1-0.20260428013916-2bbd517b7633 // indirect

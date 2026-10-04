@@ -379,9 +379,9 @@ export function candidateArtworkURL(candidate: MatchCandidate): string | undefin
 }
 
 // AUDIO_CACHE_SCHEME 必须与后端 internal/server/server.go 的 audioSliceScheme 保持一致。
-// 任何改变音频下发字节的改动（切段算法、合成 WAV 头……）都要两边一起 +1，
+// 任何改变音频下发字节的改动（切段算法、合成 WAV 头、ALAC 软解……）都要两边一起 +1，
 // 否则浏览器（尤其 WebView2）会继续命中旧缓存里的字节。
-export const AUDIO_CACHE_SCHEME = 2;
+export const AUDIO_CACHE_SCHEME = 3;
 
 export function audioURL(track: Track): string | undefined {
 	if (apiReadMode === 'mock' || (track.syncState && track.syncState !== 'indexed')) return undefined;

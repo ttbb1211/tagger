@@ -157,7 +157,7 @@ func TestIfRangeRejects(t *testing.T) {
 	}
 }
 
-// 端到端：cue 切片响应的 ETag 带 -cue2；旧 ETag 作 If-Range 时必须整段重传而不是 206。
+// 端到端：cue 切片响应的 ETag 带当前方案号；旧 ETag 作 If-Range 时必须整段重传而不是 206。
 func TestCueWAVSliceETagAndIfRange(t *testing.T) {
 	s := newTestServer(t)
 	root := s.writer.Root()
@@ -198,7 +198,7 @@ func TestCueWAVSliceETagAndIfRange(t *testing.T) {
 
 	segLen := cueOffsetBytes(track.EndOffsetSeconds-track.StartOffsetSeconds, byteRate, blockAlign)
 	virtualSize := int64(44) + segLen
-	wantETag := `"rev1-cue2"`
+	wantETag := audioETag(track.Revision, true)
 
 	// 1) 新 ETag 带方案号，整段返回
 	resp := ut.PerformRequest(s.h.Engine, "GET", "/__test/cueslice-etag", nil)

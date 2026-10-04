@@ -112,7 +112,7 @@ describe('GlobalPlayer 播放模式', () => {
     expect(screen.getByTitle('下一首')).toBeDisabled();
   });
 
-  it('explains that ALAC-in-M4A cannot be decoded in the current Chromium player', () => {
+  it('shows actionable failure guidance for ALAC playback', () => {
     const alacTrack = {
       ...track,
       format: 'm4a' as const,
@@ -122,8 +122,7 @@ describe('GlobalPlayer 播放模式', () => {
     fireEvent.error(audio);
 
     expect(onPlayingChange).toHaveBeenCalledWith(false);
-    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('使用 ALAC 编码'));
-    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('不提供 ALAC 解码器'));
+    expect(onNotice).toHaveBeenCalledWith(expect.stringContaining('ALAC 播放失败'));
   });
 
   it('shows a generic playback error for other unsupported audio', () => {

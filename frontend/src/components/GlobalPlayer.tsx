@@ -211,7 +211,7 @@ export function GlobalPlayer({track, playing, onPlayingChange, onTrackEnded, onP
           advancingRef.current = false;
           onPlayingChange(false);
           if (track?.format === 'm4a' && /alac/i.test(track.properties.codec)) {
-            onNotice?.('无法播放此 M4A：它使用 ALAC 编码，当前 WebView2/Chromium 不提供 ALAC 解码器；文件和音频接口正常。');
+            onNotice?.('ALAC 播放失败：请确认服务端已升级，并检查音频是否损坏或超出当前 WAV 支持范围。');
           } else {
             onNotice?.('播放失败：当前浏览器无法解码或读取这首音频。');
           }

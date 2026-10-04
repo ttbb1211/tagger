@@ -35,6 +35,7 @@ import (
 	"github.com/ericwyn/tagger/internal/providers"
 	"github.com/ericwyn/tagger/internal/scanner"
 	"github.com/ericwyn/tagger/internal/store"
+	alac "github.com/mycophonic/saprobe-alac"
 )
 
 type Server struct {
@@ -2121,6 +2122,12 @@ func (s *Server) handleAudio(_ context.Context, c *app.RequestContext) {
 		s.writeError(c, consts.StatusNotFound, "audio_not_found", "音频文件不存在")
 		return
 	}
+	// ALAC 软解：Chromium/WebView2 无原生 ALAC 解码器（仅 Safari 支持），
+	// 后端把 ALAC 实时解码成 PCM 再裹成 WAV 流式下发，浏览器即可播放。
+	if track.Format == domain.FormatM4A && strings.EqualFold(track.Properties.Codec, "ALAC") {
+		s.serveALACWAV(c, file, track)
+		return
+	}
 
 	etag := audioETag(track.Revision, false)
 	c.Header("ETag", etag)
@@ -2321,7 +2328,7 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 		if he > headerLen-1 {
 			he = headerLen - 1
 		}
-		parts = append(parts, bytes.NewReader(header[start : he+1]))
+		parts = append(parts, bytes.NewReader(header[start:he+1]))
 	}
 	if end >= headerLen {
 		ps := start
@@ -2336,6 +2343,180 @@ func (s *Server) serveCueWAVSlice(c *app.RequestContext, file *os.File, fileSize
 	c.SetStatusCode(status)
 	c.SetBodyStream(&closeOnRead{Reader: io.MultiReader(parts...), Closer: file}, int(end-start+1))
 	return true
+}
+
+// ALAC/MP4 软解（v1.7.0）：PCM 按需从源文件解码，既不写临时文件，也不缓存整首歌。
+// 只在首次请求时解码末包，取精确总帧数；这避免 Duration() 以完整包估算时
+// 把最后一包的填充量误当成可播放音频，造成 WAV 长度/Range 不一致。
+func alacPCMSize(dec *alac.Decoder) (int64, error) {
+	f := dec.Format()
+	if f.SampleRate <= 0 || f.Channels < 1 || f.Channels > 2 || (f.BitDepth != 16 && f.BitDepth != 20 && f.BitDepth != 24 && f.BitDepth != 32) {
+		return 0, fmt.Errorf("不支持的 ALAC PCM 格式: %+v", f)
+	}
+	blockAlign := int64(f.Channels * ((f.BitDepth + 7) / 8))
+	if dec.Duration() <= 0 {
+		return 0, fmt.Errorf("ALAC 文件时长无效")
+	}
+	// Duration() 依据 packet 数 × 每包最大帧数估算；往回一帧定位末包，
+	// 只需解码末包而非整首歌。时间戳不恰好对齐时也使用 Seek 实际位置。
+	lastFrameTime := dec.Duration() - time.Second/time.Duration(f.SampleRate)
+	pos, err := dec.Seek(lastFrameTime)
+	if err != nil {
+		return 0, fmt.Errorf("定位 ALAC 末包: %w", err)
+	}
+	priorFrames := int64(math.Round(pos.Seconds() * float64(f.SampleRate)))
+	lastBytes, err := io.Copy(io.Discard, dec)
+	if err != nil {
+		return 0, fmt.Errorf("解码 ALAC 末包: %w", err)
+	}
+	pcmSize := priorFrames*blockAlign + lastBytes
+	if lastBytes <= 0 || lastBytes%blockAlign != 0 || pcmSize <= 0 || pcmSize > math.MaxUint32-36 {
+		return 0, fmt.Errorf("ALAC 解码长度无效或超过经典 WAV 4GiB 限制: %d", pcmSize)
+	}
+	if _, err := dec.Seek(0); err != nil {
+		return 0, fmt.Errorf("复位 ALAC 解码器: %w", err)
+	}
+	return pcmSize, nil
+}
+
+// alacSeekBytes 定位到目标 PCM 字节（可落在样本/包中间）。Seek 到包边界后
+// 丢弃包内剩余字节即可精确支持任意 HTTP Range，包括非 blockAlign 对齐的区间。
+func alacSeekBytes(dec *alac.Decoder, offset int64) error {
+	if offset < 0 {
+		return fmt.Errorf("ALAC 字节偏移无效: %d", offset)
+	}
+	f := dec.Format()
+	blockAlign := int64(f.Channels * ((f.BitDepth + 7) / 8))
+	frame := offset / blockAlign
+	// 减一个帧长避免浮点舍入把位置推到下一包；丢弃量最多一包。
+	t := time.Duration(frame * int64(time.Second) / int64(f.SampleRate))
+	if t > 0 {
+		t--
+	}
+	pos, err := dec.Seek(t)
+	if err != nil {
+		return fmt.Errorf("定位 ALAC PCM: %w", err)
+	}
+	priorFrames := int64(math.Round(pos.Seconds() * float64(f.SampleRate)))
+	skip := offset - priorFrames*blockAlign
+	if skip < 0 {
+		return fmt.Errorf("ALAC 定位落在目标之后")
+	}
+	if _, err := io.CopyN(io.Discard, dec, skip); err != nil {
+		return fmt.Errorf("跳过 ALAC 包内 PCM: %w", err)
+	}
+	return nil
+}
+
+// alacDecodeSem 限制「同时解析 MP4 索引」的 ALAC 请求数。
+//
+// 解码器会按文件里声明的 stsz 样本数 / stsd 长度一次性分配索引缓冲；畸形但已入库的
+// M4A 可能声明超大值。把「建解码器」这一步的并发卡在少量，即可给这类分配设上界，
+// 正常播放（每请求几十 KB 索引）几乎不受影响。流式读包阶段不占用该信号量。
+var alacDecodeSem = make(chan struct{}, 4)
+
+// openALAC 在建解码器（含索引分配）与求精确 PCM 长度期间持有并发信号量，
+// 返回后释放，交给调用方流式读取。
+func openALAC(file *os.File) (*alac.Decoder, int64, error) {
+	alacDecodeSem <- struct{}{}
+	defer func() { <-alacDecodeSem }()
+	dec, err := alac.NewDecoder(file)
+	if err != nil {
+		return nil, 0, err
+	}
+	pcmSize, err := alacPCMSize(dec)
+	if err != nil {
+		return nil, 0, err
+	}
+	return dec, pcmSize, nil
+}
+
+// serveALACWAV 返回标准 PCM WAV 虚拟文件，首包立即解码立即输出，内存仅持有
+// MP4 索引与当前 ALAC 包；Range 请求独立打开解码器，支持拖动且不累积临时文件。
+func (s *Server) serveALACWAV(c *app.RequestContext, file *os.File, track domain.Track) {
+	dec, pcmSize, err := openALAC(file)
+	if err != nil {
+		_ = file.Close()
+		s.writeError(c, consts.StatusUnsupportedMediaType, "alac_decode_failed", err.Error())
+		return
+	}
+	header := buildALACWAVHeader(dec.Format(), pcmSize)
+	headerLen := int64(len(header))
+	virtualSize := headerLen + pcmSize
+	etag := audioETagALAC(track.Revision)
+	c.Header("ETag", etag)
+	c.Header("Accept-Ranges", "bytes")
+	c.SetContentType("audio/wav")
+	if audioETagMatches(c.Request.Header.Peek("If-None-Match"), etag) {
+		_ = file.Close()
+		c.SetStatusCode(consts.StatusNotModified)
+		return
+	}
+
+	start, end := int64(0), virtualSize-1
+	status := consts.StatusOK
+	if rawRange := c.Request.Header.PeekRange(); len(rawRange) > 0 && !ifRangeRejects(c.Request.Header.Peek("If-Range"), etag) {
+		maxInt := int64(^uint(0) >> 1)
+		if virtualSize > maxInt {
+			_ = file.Close()
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", virtualSize))
+			c.SetStatusCode(consts.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		startPos, endPos, rangeErr := app.ParseByteRange(rawRange, int(virtualSize))
+		if rangeErr != nil {
+			_ = file.Close()
+			c.Header("Content-Range", fmt.Sprintf("bytes */%d", virtualSize))
+			c.SetStatusCode(consts.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		start, end = int64(startPos), int64(endPos)
+		status = consts.StatusPartialContent
+		c.Response.Header.SetContentRange(startPos, endPos, int(virtualSize))
+	}
+
+	var parts []io.Reader
+	if start < headerLen {
+		he := min(end, headerLen-1)
+		parts = append(parts, bytes.NewReader(header[start:he+1]))
+	}
+	if end >= headerLen {
+		ps := max(start, headerLen)
+		if err := alacSeekBytes(dec, ps-headerLen); err != nil {
+			_ = file.Close()
+			s.writeError(c, consts.StatusInternalServerError, "alac_seek_failed", err.Error())
+			return
+		}
+		parts = append(parts, io.LimitReader(dec, end-ps+1))
+	}
+	c.SetStatusCode(status)
+	c.SetBodyStream(&closeOnRead{Reader: io.MultiReader(parts...), Closer: file}, int(end-start+1))
+}
+
+// buildALACWAVHeader 按解码出的 PCM 格式合成标准 44 字节 PCM WAV 头。
+func buildALACWAVHeader(f alac.PCMFormat, dataLen int64) []byte {
+	bytesPerSample := (f.BitDepth + 7) / 8 // 20bit ALAC 左对齐装在 24bit PCM 字节里
+	blockAlign := f.Channels * bytesPerSample
+	byteRate := f.SampleRate * blockAlign
+	buf := bytes.NewBuffer(make([]byte, 0, 44))
+	buf.WriteString("RIFF")
+	binary.Write(buf, binary.LittleEndian, uint32(36+dataLen))
+	buf.WriteString("WAVE")
+	buf.WriteString("fmt ")
+	binary.Write(buf, binary.LittleEndian, uint32(16))
+	binary.Write(buf, binary.LittleEndian, uint16(1)) // PCM
+	binary.Write(buf, binary.LittleEndian, uint16(f.Channels))
+	binary.Write(buf, binary.LittleEndian, uint32(f.SampleRate))
+	binary.Write(buf, binary.LittleEndian, uint32(byteRate))
+	binary.Write(buf, binary.LittleEndian, uint16(blockAlign))
+	binary.Write(buf, binary.LittleEndian, uint16(bytesPerSample*8))
+	buf.WriteString("data")
+	binary.Write(buf, binary.LittleEndian, uint32(dataLen))
+	return buf.Bytes()
+}
+
+func audioETagALAC(revision string) string {
+	return `"` + revision + "-al" + audioSliceScheme + `"`
 }
 
 func audioETagMatches(header []byte, etag string) bool {
@@ -2363,7 +2544,9 @@ func audioETagMatches(header []byte, etag string) bool {
 //
 //	1: 初版
 //	2: cue 切片起点改为「四舍五入 + blockAlign 对齐」（v1.6.10 补版本号）
-const audioSliceScheme = "2"
+//	3: 新增 ALAC 后端软解（ALAC→PCM→WAV 流式下发），下发字节整体改变；
+//	   同步前端 AUDIO_CACHE_SCHEME = 3 让旧缓存失效
+const audioSliceScheme = "3"
 
 // audioETag 构造音频响应的 ETag，把 audioSliceScheme 编进去（见上）。
 func audioETag(revision string, cueSlice bool) string {
