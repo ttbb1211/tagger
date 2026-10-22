@@ -15,6 +15,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"github.com/ericwyn/tagger/internal/artwork"
 	"github.com/ericwyn/tagger/internal/domain"
@@ -162,9 +165,22 @@ func TestWriterValidateWritableChecksTemporarySiblingPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(album, 0o755) })
+	requireUnwritableDir(t, album)
 	err = writer.ValidateWritable([]library.FileRef{ref})
 	if !errors.Is(err, ErrTargetNotWritable) || !strings.Contains(err.Error(), "temporary sibling") {
 		t.Fatalf("read-only directory preflight error = %v", err)
+	}
+}
+
+// requireUnwritableDir 确认目录在 chmod 之后确实不可写。root 拥有
+// CAP_DAC_OVERRIDE、部分容器与 Windows 文件系统也会忽略权限位，此时
+// 「只读目录」这个前提根本不成立，用例必然失败 —— 直接跳过而不是报假错。
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, ".tagger-perm-probe")
+	if err := os.WriteFile(probe, nil, 0o600); err == nil {
+		_ = os.Remove(probe)
+		t.Skipf("当前身份无视目录权限位（root/CAP_DAC_OVERRIDE 或文件系统不校验），跳过只读目录用例: %s", dir)
 	}
 }
 
@@ -1301,4 +1317,102 @@ func testPNG(t *testing.T, width, height int) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
+}
+
+// 回归：GBK 的 cue 里写入 GBK 编不了的字符（emoji、非 BMP）时，cue.encodeText
+// 会退回 UTF-8 字节，整个文件被静默改掉编码。这种情况必须在 Warnings 里明确
+// 告知用户，否则老播放器显示乱码时无从追溯。
+func TestWriterWarnsWhenGbkCueFallsBackToUtf8(t *testing.T) {
+	root := t.TempDir()
+	audioPath := filepath.Join(root, "album.wav")
+	if err := os.WriteFile(audioPath, []byte("fake wav bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cueText := "PERFORMER \"歌手\"\nTITLE \"专辑\"\nFILE \"album.wav\" WAVE\n" +
+		"  TRACK 01 AUDIO\n    TITLE \"第一首\"\n    INDEX 01 00:00:00\n"
+	gbkBody, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(cueText))
+	if err != nil {
+		t.Fatalf("encode gbk: %v", err)
+	}
+	cuePath := filepath.Join(root, "album.cue")
+	if err := os.WriteFile(cuePath, gbkBody, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	engine := newMemoryEngine(map[string][]string{"TITLE": {"专辑"}})
+	writer, err := New(root, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := cueVirtualRef(t, root, engine, audioPath, "album.wav", 1)
+
+	// 先写纯中文：GBK 编得了，不得产生任何编码相关告警。
+	result, err := writer.Write(context.Background(), ref, ref.Revision, domain.TagPatch{
+		Title: &domain.StringFieldPatch{Op: domain.OperationSet, Value: "第二首"},
+	}, false)
+	if err != nil {
+		t.Fatalf("plain gbk write: %v", err)
+	}
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "GBK") {
+			t.Fatalf("unexpected encoding warning for encodable value: %v", result.Warnings)
+		}
+	}
+	if utf8ValidBytes(t, mustReadFile(t, cuePath)) {
+		t.Fatalf("plain chinese write should stay gbk")
+	}
+	ref.Revision = result.CurrentRevision
+
+	// 再写 emoji：GBK 编不了，文件转 UTF-8，必须给出告警。
+	result, err = writer.Write(context.Background(), ref, ref.Revision, domain.TagPatch{
+		Title: &domain.StringFieldPatch{Op: domain.OperationSet, Value: "第二首 🎵"},
+	}, false)
+	if err != nil {
+		t.Fatalf("emoji write: %v", err)
+	}
+	found := false
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "GBK") && strings.Contains(warning, "UTF-8") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing gbk fallback warning: %v", result.Warnings)
+	}
+	if !utf8ValidBytes(t, mustReadFile(t, cuePath)) {
+		t.Fatalf("cue should be utf-8 after fallback")
+	}
+}
+
+// cueVirtualRef 构造一个指向 cue 第 number 轨的 FileRef。
+func cueVirtualRef(t *testing.T, root string, engine tags.Engine, audioPath, relative string, number int) library.FileRef {
+	t.Helper()
+	info, err := os.Stat(audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := engine.Read(context.Background(), audioPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return library.FileRef{
+		ID:           "trk-cue-test",
+		RelativePath: domain.CueVirtualPath(relative, number),
+		AbsolutePath: filepath.Join(root, filepath.FromSlash(relative)),
+		Revision:     scanner.FileRevision(relative, info, snapshot.Raw),
+		Format:       domain.FormatWAV,
+	}
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func utf8ValidBytes(t *testing.T, data []byte) bool {
+	t.Helper()
+	return utf8.Valid(data)
 }

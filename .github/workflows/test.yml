@@ -1,0 +1,48 @@
+name: Test
+
+# 每次 push / PR 都跑 vet 与测试。
+# 背景：build-linux.yml 里虽然有 make test，但它只在 v* tag、release、手动触发
+# 时才跑 —— 日常提交完全没有测试兜底。这里补一条轻量流水线，只做静态检查与
+# 单元测试，不构建前端、不打包，几十秒出结果。
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.dockerignore'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-test:
+    name: go vet & go test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # go.senan.xyz/taglib 是 cgo 绑定，编译 internal/tags/taglibwasm 需要
+      # TagLib 头文件与 pkg-config，缺了会直接编译失败。
+      - name: Install TagLib headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtag1-dev pkg-config
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1

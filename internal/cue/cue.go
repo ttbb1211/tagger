@@ -226,6 +226,27 @@ var cueWritableFields = map[string]bool{
 	"COMMENT": true, "TITLE": true, "ARTIST": true, "ISRC": true,
 }
 
+// trackScopedFields 是必须落到具体 TRACK 块里的字段；其余可写字段
+// （ALBUM/ALBUMARTIST/DATE/GENRE/COMMENT）作用在全局区，与轨道无关。
+var trackScopedFields = map[string]bool{
+	"TITLE": true, "ARTIST": true, "ISRC": true,
+}
+
+// hasTrackScopedUpdate 报告这批更新里是否存在需要写进具体轨道的字段。
+// 空值更新会被 ApplyUpdates 跳过，这里也一并跳过，避免误判为需要校验轨道。
+func hasTrackScopedUpdate(updates map[string][]string) bool {
+	for key, values := range updates {
+		if !trackScopedFields[strings.ToUpper(key)] {
+			continue
+		}
+		if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // SupportedFields reports which update keys can be persisted into the cue.
 func SupportedFields(keys []string) (applied, skipped []string) {
 	for _, key := range keys {
@@ -245,6 +266,12 @@ func ApplyUpdates(data []byte, trackNumber int, updates map[string][]string) (ne
 	sheet, err := ParseBytes(data)
 	if err != nil {
 		return nil, nil, err
+	}
+	// 轨道作用域字段先确认目标轨道存在：trackBlockBounds 找不到轨道时无法
+	// 定位块边界，若继续写就会落到全局区（改掉专辑 TITLE）或插进第 1 轨，
+	// 而且返回的 applied 还包含该字段，上层会误以为写入成功。
+	if hasTrackScopedUpdate(updates) && sheet.track(trackNumber) == nil {
+		return nil, nil, fmt.Errorf("cue 中不存在 TRACK %d（共 %d 轨）", trackNumber, len(sheet.Tracks))
 	}
 	// 与解析保持同一编码视角：GBK 文件先解码，编辑后再编码回去
 	if sheet.Encoding != "utf8" {
@@ -311,6 +338,11 @@ func setText(text, key, value string, global bool, trackNumber ...int) string {
 	blockStart, blockEnd := trackBlockBounds(lines, number)
 	scopeStart, scopeEnd := 0, len(lines)
 	if !global {
+		if blockStart < 0 {
+			// 轨道不存在：原样返回，绝不退化成全局改写（ApplyUpdates 已提前
+			// 校验过轨道存在，这里只是兜底）。
+			return text
+		}
 		scopeStart, scopeEnd = blockStart, blockEnd
 	}
 	prefix := key + " "
@@ -386,7 +418,9 @@ func trackBlockBounds(lines []string, number int) (start, end int) {
 		break
 	}
 	if startIdx < 0 {
-		return 0, len(lines)
+		// 找不到轨道时返回 (-1, -1)，由调用方显式处理。早期版本返回
+		// (0, len(lines))，等于把「整个文件」当成轨道块，会静默改写全局区。
+		return -1, -1
 	}
 	end = len(lines)
 	for i := startIdx + 1; i < len(lines); i++ {

@@ -50,6 +50,7 @@ type Server struct {
 	version          string
 	tagEngineInfo    string
 	authToken        string
+	authGuard        *authGuard
 	downloadArtwork  func(context.Context, providers.ArtworkReference) (artwork.Asset, error)
 	artworkCache     *artwork.Cache
 	stopArtworkCache context.CancelFunc
@@ -79,6 +80,7 @@ func New(listen string, libraryService *library.Service, writer *filewrite.Write
 		version:         version,
 		tagEngineInfo:   tagEngineInfo,
 		downloadArtwork: downloadArtwork,
+		authGuard:       newAuthGuard(),
 	}
 	s.routes()
 	return s
@@ -197,6 +199,14 @@ func (s *Server) requireAuth(ctx context.Context, c *app.RequestContext) {
 		c.Next(ctx)
 		return
 	}
+	clientKey := authGuardKey(c)
+	if wait := s.authGuard.lockedFor(clientKey); wait > 0 {
+		c.Header("Retry-After", s.authGuard.retryAfter(wait))
+		c.AbortWithStatusJSON(consts.StatusTooManyRequests, map[string]any{"error": map[string]string{
+			"code": "auth_locked", "message": "认证失败次数过多，请稍后再试",
+		}})
+		return
+	}
 	authorization := strings.TrimSpace(string(c.Request.Header.Peek("Authorization")))
 	token := ""
 	fromHeader := false
@@ -215,12 +225,18 @@ func (s *Server) requireAuth(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 	if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
+		// 只有「确实带了令牌但不对」才计数；没带令牌的请求永远不可能猜中，
+		// 计入反而会让页面首次加载（尚未登录）就触发锁定。
+		if token != "" {
+			s.authGuard.recordFailure(clientKey)
+		}
 		c.Header("WWW-Authenticate", `Bearer realm="tagger"`)
 		c.AbortWithStatusJSON(consts.StatusUnauthorized, map[string]any{"error": map[string]string{
 			"code": "auth_required", "message": "需要提供有效的 Tagger 访问令牌",
 		}})
 		return
 	}
+	s.authGuard.recordSuccess(clientKey)
 	if fromHeader {
 		encoded := base64.RawURLEncoding.EncodeToString([]byte(token))
 		c.Header("Set-Cookie", authCookieName+"="+encoded+"; Path=/; HttpOnly; SameSite=Strict")

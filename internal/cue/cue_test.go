@@ -90,6 +90,45 @@ func TestApplyUpdatesTrackScope(t *testing.T) {
 	}
 }
 
+func TestApplyUpdatesRejectsUnknownTrack(t *testing.T) {
+	// 不存在的轨道：必须报错。早期实现会退化成「整个文件」作用域，
+	// 把全局 TITLE 改掉或把字段插进第 1 轨，且返回成功。
+	newData, applied, err := ApplyUpdates([]byte(sample), 99, map[string][]string{
+		"TITLE": {"不该写进去"},
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing track, got applied=%v", applied)
+	}
+	if newData != nil || applied != nil {
+		t.Fatalf("failed apply must not return data/applied: %q / %v", newData, applied)
+	}
+
+	// 纯全局字段不依赖具体轨道，仍应成功，且不得动到任何轨。
+	text, _, err := ApplyUpdates([]byte(sample), 99, map[string][]string{
+		"ALBUM": {"只有专辑名"},
+	})
+	if err != nil {
+		t.Fatalf("global-only update should succeed: %v", err)
+	}
+	sheet, err := ParseBytes(text)
+	if err != nil {
+		t.Fatalf("reparse: %v", err)
+	}
+	if sheet.Title != "只有专辑名" {
+		t.Fatalf("album: %q", sheet.Title)
+	}
+	if sheet.Tracks[1].Title != "我也會愛上別人" {
+		t.Fatalf("track2 title changed: %q", sheet.Tracks[1].Title)
+	}
+}
+
+func TestTrackBlockBoundsMissingTrack(t *testing.T) {
+	lines := strings.Split(sample, "\n")
+	if start, end := trackBlockBounds(lines, 99); start != -1 || end != -1 {
+		t.Fatalf("missing track bounds = (%d, %d), want (-1, -1)", start, end)
+	}
+}
+
 func TestApplyUpdatesGlobalAndInsertion(t *testing.T) {
 	// TRACK 01 没有 TITLE/PERFORMER 行 —— 需要插入
 	newText, _, err := ApplyUpdates([]byte(sample), 1, map[string][]string{
