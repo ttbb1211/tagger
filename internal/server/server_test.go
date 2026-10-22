@@ -983,6 +983,7 @@ func TestBatchEditAPIRejectsUnwritableMusicDirectoryBeforeEnqueue(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, info.Mode().Perm()) })
+	requireUnwritableDir(t, root)
 	body := []byte(`{"items":[{"trackId":"` + track.ID + `","baseRevision":"` + track.Revision + `"}],"operations":[{"field":"genres","mode":"append","value":"Live"}]}`)
 	response := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/tracks/batch-edit",
 		&ut.Body{Body: bytes.NewReader(body), Len: len(body)}, ut.Header{Key: "content-type", Value: "application/json"})
@@ -1342,6 +1343,7 @@ func TestFailedMatchWritePreflightKeepsReviewStateUntilDirectoryIsWritable(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(root, info.Mode().Perm()) })
+	requireUnwritableDir(t, root)
 
 	unwritable := ut.PerformRequest(s.h.Engine, "POST", "/api/v1/matches/jobs/"+matchJob.ID+"/write",
 		&ut.Body{Body: bytes.NewReader(body), Len: len(body)}, ut.Header{Key: "content-type", Value: "application/json"})
@@ -1675,4 +1677,16 @@ func serverTestScanResult(libraryID, name string, tracks ...domain.Track) scanne
 
 func serverTestTrack(id, relativePath string) domain.Track {
 	return domain.Track{ID: id, FileName: filepath.Base(relativePath), RelativePath: relativePath, FolderID: "folder-root", Format: domain.FormatMP3, Title: id, Artists: []string{"Artist"}, Album: "Album", AlbumArtists: []string{}, Genres: []string{}, Health: domain.HealthComplete, Revision: "rev-" + id}
+}
+
+// requireUnwritableDir 确认目录在 chmod 之后确实不可写。root 拥有
+// CAP_DAC_OVERRIDE、部分容器与 Windows 文件系统也会忽略权限位，此时
+// 「只读目录」这个前提根本不成立，用例必然失败 —— 直接跳过而不是报假错。
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, ".tagger-perm-probe")
+	if err := os.WriteFile(probe, nil, 0o600); err == nil {
+		_ = os.Remove(probe)
+		t.Skipf("当前身份无视目录权限位（root/CAP_DAC_OVERRIDE 或文件系统不校验），跳过只读目录用例: %s", dir)
+	}
 }

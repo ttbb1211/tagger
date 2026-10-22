@@ -162,9 +162,22 @@ func TestWriterValidateWritableChecksTemporarySiblingPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(album, 0o755) })
+	requireUnwritableDir(t, album)
 	err = writer.ValidateWritable([]library.FileRef{ref})
 	if !errors.Is(err, ErrTargetNotWritable) || !strings.Contains(err.Error(), "temporary sibling") {
 		t.Fatalf("read-only directory preflight error = %v", err)
+	}
+}
+
+// requireUnwritableDir 确认目录在 chmod 之后确实不可写。root 拥有
+// CAP_DAC_OVERRIDE、部分容器与 Windows 文件系统也会忽略权限位，此时
+// 「只读目录」这个前提根本不成立，用例必然失败 —— 直接跳过而不是报假错。
+func requireUnwritableDir(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, ".tagger-perm-probe")
+	if err := os.WriteFile(probe, nil, 0o600); err == nil {
+		_ = os.Remove(probe)
+		t.Skipf("当前身份无视目录权限位（root/CAP_DAC_OVERRIDE 或文件系统不校验），跳过只读目录用例: %s", dir)
 	}
 }
 
