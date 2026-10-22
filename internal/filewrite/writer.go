@@ -1333,6 +1333,12 @@ func (w *Writer) mutateCue(ctx context.Context, ref library.FileRef, baseRevisio
 	if err := verifyUpdates(verifySheet.RawTags(number), filterUpdates(updates, appliedKeys)); err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrVerification, err)
 	}
+	// GBK 编不了 emoji、非 BMP 字符与部分生僻字，此时 cue.encodeText 会退回
+	// UTF-8 字节。文件本身仍然可读，但编码被静默改掉，老播放器可能显示乱码，
+	// 所以必须让调用方知道。
+	if sheet.Encoding == "gbk" && verifySheet.Encoding != "gbk" {
+		result.Warnings = append(result.Warnings, "cue 原为 GBK 编码，本次写入的内容含 GBK 不支持的字符（emoji、非 BMP 字符或生僻字），文件已按 UTF-8 保存；个别老播放器可能显示乱码")
+	}
 	if err := writeCueAtomic(cuePath, newData); err != nil {
 		return Result{}, err
 	}
